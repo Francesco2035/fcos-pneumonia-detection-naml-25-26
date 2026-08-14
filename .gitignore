@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Datasets
+data/
+datasets/
+
+# Checkpoints
+checkpoints/
+*.pth
+*.pt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.venv/
+venv/
