@@ -1,30 +1,41 @@
-from torchvision import transforms
+import torch
+from torchvision.transforms import v2
+
+
+from torchvision.transforms import v2
 
 
 def get_train_transforms(image_size=224):
 
-    return transforms.Compose([
-        transforms.Resize(
+    return v2.Compose([
+        v2.Resize(
             (image_size, image_size)
         ),
 
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
+        v2.RandomHorizontalFlip(),
+        v2.RandomVerticalFlip(),
 
-        transforms.ColorJitter(
+        v2.ColorJitter(
             brightness=0.2
         ),
 
-        transforms.ToTensor(),
+        v2.ToDtype(
+            torch.float32,
+            scale=True
+        ),
     ])
+
 
 
 def get_test_transforms(image_size=224):
 
-    return transforms.Compose([
-        transforms.Resize(
+    return v2.Compose([
+        v2.Resize(
             (image_size, image_size)
         ),
 
-        transforms.ToTensor(),
+        v2.ToDtype(
+            torch.float32,
+            scale=True
+        ),
     ])

@@ -1,6 +1,8 @@
 from src.datasets.DICOMDataset import DICOMDataset
 import pandas as pd
-
+from torchvision import tv_tensors
+import torch
+from torchvision.transforms import v2
 
 class RSNAPneumoniaDataset(DICOMDataset):
 
@@ -18,25 +20,112 @@ class RSNAPneumoniaDataset(DICOMDataset):
 
         self.csv_path = csv_path
         self.df = None
-        self.annotations = None
+        self.annotations = {}
 
         self._read_csv()
+        self._build_annotations()
 
 
     def _read_csv(self):
         self.df = pd.read_csv(self.csv_path)
 
 
+    
+    def _build_annotations(self):
+        groupById = self.df.groupby("patientId")
+        for patient_id, data in groupById:
 
-csv_path = "data/rsna-pneumonia-detection-challenge/stage_2_train_labels.csv"
+            labels = []
+            boxes = []
+
+            for _, row in data.iterrows():
+
+                if row["Target"] == 1:
+
+                    labels.append(1)
+
+                    boxes.append([
+                        row["x"],
+                        row["y"],
+                        row["x"] + row["width"],
+                        row["y"] + row["height"],
+                    ])
+
+            self.annotations[patient_id] = {
+                "labels": labels,
+                "boxes": boxes,
+            }
 
 
-train_dcm_path = (
-    "data/rsna-pneumonia-detection-challenge/"
-    "stage_2_train_images"
-)
+    def __getitem__(self, index):
 
-dataset = RSNAPneumoniaDataset(train_dcm_path,csv_path, None)
+            # -----------------------------
+            # DICOM
+            # -----------------------------
 
-print(dataset.df)
+            path = self.image_paths[index]
+
+            patient_id = path.stem
+
+            image = self._load_dicom(path)
+
+            # -----------------------------
+            # Image -> tv_tensor Image
+            # -----------------------------
+
+            image = v2.ToImage()(image)
+
+            # -----------------------------
+            # Annotation
+            # -----------------------------
+
+            annotation = self.annotations[patient_id]
+
+            boxes = torch.tensor(
+                annotation["boxes"],
+                dtype=torch.float32,
+            )
+
+            labels = torch.tensor(
+                annotation["labels"],
+                dtype=torch.int64,
+            )
+
+            # -----------------------------
+            # Bounding boxes
+            # -----------------------------
+
+            boxes = tv_tensors.BoundingBoxes(
+                boxes,
+                format=tv_tensors.BoundingBoxFormat.XYXY,
+                canvas_size=image.shape[-2:],
+            )
+
+            # -----------------------------
+            # Target
+            # -----------------------------
+
+            target = {
+                "boxes": boxes,
+                "labels": labels,
+            }
+
+            # -----------------------------
+            # Transform
+            # -----------------------------
+
+            if self.transform is not None:
+
+                image, target = self.transform(
+                    image,
+                    target,
+                )
+
+            return image, target
+    
+
+
+
+
+
 

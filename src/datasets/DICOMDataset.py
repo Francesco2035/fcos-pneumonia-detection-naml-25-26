@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    test_dcm_path = (
+    train_dcm_path = (
         "data/rsna-pneumonia-detection-challenge/"
         "stage_2_train_images"
     )
