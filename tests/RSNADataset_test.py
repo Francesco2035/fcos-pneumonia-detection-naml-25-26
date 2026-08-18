@@ -1,5 +1,10 @@
-from src.datasets.RSNAPneumoniaDataset import RSNAPneumoniaDataset
-from src.datasets.transforms import get_train_transforms
+from src.datasets.RSNAPneumoniaDataset import (
+    RSNAPneumoniaDataset,
+)
+
+from src.datasets.transforms import (
+    get_train_transforms,
+)
 
 import random
 import torch
@@ -9,90 +14,224 @@ import matplotlib.patches as patches
 
 
 # =========================================================
-# Paths
+# PATHS
 # =========================================================
 
-csv_path = (
+CSV_PATH = (
     "data/rsna-pneumonia-detection-challenge/"
     "stage_2_train_labels.csv"
 )
 
-train_dcm_path = (
+TRAIN_DCM_PATH = (
     "data/rsna-pneumonia-detection-challenge/"
     "stage_2_train_images"
 )
 
 
 # =========================================================
-# Dataset originale
+# CREATE DATASET
 # =========================================================
 
-dataset = RSNAPneumoniaDataset(
-    dcm_path=train_dcm_path,
-    csv_path=csv_path,
-    transform=None,
-)
+def create_dataset(transform=None):
 
-
-# =========================================================
-# Trova tutte le immagini positive
-# =========================================================
-
-positive_indices = []
-
-for i in range(len(dataset)):
-
-    patient_id = dataset.image_paths[i].stem
-
-    if len(dataset.annotations[patient_id]["boxes"]) > 0:
-        positive_indices.append(i)
-
-
-print("Numero immagini positive:", len(positive_indices))
+    return RSNAPneumoniaDataset(
+        dcm_path=TRAIN_DCM_PATH,
+        csv_path=CSV_PATH,
+        transform=transform,
+    )
 
 
 # =========================================================
-# Seleziona 10 immagini casuali
+# FIND POSITIVE IMAGES
 # =========================================================
 
-random.seed(43)
+def get_positive_indices(dataset):
 
-num_images = min(
-    10,
-    len(positive_indices)
-)
+    positive_indices = []
 
-selected_indices = random.sample(
-    positive_indices,
-    num_images
-)
+    for i in range(len(dataset)):
 
-print("Indici selezionati:")
-print(selected_indices)
+        patient_id = dataset.image_paths[i].stem
 
+        if len(
+            dataset.annotations[patient_id]["boxes"]
+        ) > 0:
 
-# =========================================================
-# Train transforms
-# =========================================================
+            positive_indices.append(i)
 
-transform = get_train_transforms(
-    image_size=224
-)
+    return positive_indices
 
 
 # =========================================================
-# Dataset trasformato
+# CHECK SINGLE DATASET ITEM
 # =========================================================
 
-transformed_dataset = RSNAPneumoniaDataset(
-    dcm_path=train_dcm_path,
-    csv_path=csv_path,
-    transform=transform,
-)
+def check_dataset_item(
+    dataset,
+    index=0,
+):
+
+    image, target = dataset[index]
+
+    print("\n================ DATASET ITEM ================")
+
+    print("Index:", index)
+
+    print("Image type:")
+    print(type(image))
+
+    print("Image shape:")
+    print(image.shape)
+
+    print("Image dtype:")
+    print(image.dtype)
+
+    print("Image min:")
+    print(image.min().item())
+
+    print("Image max:")
+    print(image.max().item())
+
+    print("\nBoxes:")
+    print(target["boxes"])
+
+    print("\nLabels:")
+    print(target["labels"])
+
+    # -----------------------------------------------------
+    # Check boxes / labels
+    # -----------------------------------------------------
+
+    assert len(
+        target["boxes"]
+    ) == len(
+        target["labels"]
+    )
+
+    # -----------------------------------------------------
+    # Check boxes
+    # -----------------------------------------------------
+
+    boxes = target["boxes"]
+
+    h, w = boxes.canvas_size
+
+    assert torch.all(
+        boxes[:, 0] >= 0
+    )
+
+    assert torch.all(
+        boxes[:, 1] >= 0
+    )
+
+    assert torch.all(
+        boxes[:, 2] <= w
+    )
+
+    assert torch.all(
+        boxes[:, 3] <= h
+    )
+
+    assert torch.all(
+        boxes[:, 0] < boxes[:, 2]
+    )
+
+    assert torch.all(
+        boxes[:, 1] < boxes[:, 3]
+    )
+
+    print("\n✓ Dataset item test passed")
 
 
 # =========================================================
-# Funzione per disegnare bounding boxes
+# CHECK DATALOADER
+# =========================================================
+
+def check_dataloader(
+    batch_size=4,
+):
+
+    dataset = create_dataset(
+        transform=get_train_transforms(
+            image_size=224
+        )
+    )
+
+    loader = dataset.get_dataloader(
+        batch_size=batch_size,
+        shuffle=True,
+    )
+
+    images, targets = next(
+        iter(loader)
+    )
+
+    print("\n================ DATALOADER ================")
+
+    print("Batch size:", batch_size)
+
+    print("\nImages")
+
+    print("type:")
+    print(type(images))
+
+    print("shape:")
+    print(images.shape)
+
+    print("dtype:")
+    print(images.dtype)
+
+    print("\nTargets")
+
+    print("type:")
+    print(type(targets))
+
+    print("number of targets:")
+    print(len(targets))
+
+    # -----------------------------------------------------
+    # Check image batch
+    # -----------------------------------------------------
+
+    assert images.shape[0] == batch_size
+
+    assert images.shape[1:] == (
+        1,
+        224,
+        224,
+    )
+
+    # -----------------------------------------------------
+    # Check targets
+    # -----------------------------------------------------
+
+    assert len(targets) == batch_size
+
+    for i, target in enumerate(targets):
+
+        print(f"\nTarget {i}")
+
+        print(
+            "boxes shape:",
+            target["boxes"].shape,
+        )
+
+        print(
+            "labels shape:",
+            target["labels"].shape,
+        )
+
+        assert len(
+            target["boxes"]
+        ) == len(
+            target["labels"]
+        )
+
+    print("\n✓ DataLoader test passed")
+
+
+# =========================================================
+# DRAW BOXES
 # =========================================================
 
 def draw_boxes(
@@ -126,25 +265,24 @@ def draw_boxes(
         ax.text(
             x1,
             y1,
-            f"{label.item()}",
+            str(label.item()),
             fontsize=10,
-            verticalalignment="bottom",
         )
 
     ax.axis("off")
 
 
 # =========================================================
-# Funzione di controllo
+# CHECK TRANSFORMED TARGET
 # =========================================================
 
-def check_target(
+def check_transformed_target(
     original_target,
     transformed_target,
 ):
 
     # -----------------------------------------------------
-    # Numero box = numero label
+    # Number boxes == number labels
     # -----------------------------------------------------
 
     assert len(
@@ -160,7 +298,7 @@ def check_target(
     )
 
     # -----------------------------------------------------
-    # Le labels non devono cambiare
+    # Labels unchanged
     # -----------------------------------------------------
 
     assert torch.equal(
@@ -169,7 +307,7 @@ def check_target(
     )
 
     # -----------------------------------------------------
-    # Controllo validità bounding boxes
+    # Valid boxes
     # -----------------------------------------------------
 
     for target in [
@@ -181,7 +319,6 @@ def check_target(
 
         h, w = boxes.canvas_size
 
-        # coordinate >= 0
         assert torch.all(
             boxes[:, 0] >= 0
         )
@@ -190,7 +327,6 @@ def check_target(
             boxes[:, 1] >= 0
         )
 
-        # coordinate dentro il canvas
         assert torch.all(
             boxes[:, 2] <= w
         )
@@ -199,7 +335,6 @@ def check_target(
             boxes[:, 3] <= h
         )
 
-        # box non degeneri
         assert torch.all(
             boxes[:, 0] < boxes[:, 2]
         )
@@ -210,177 +345,253 @@ def check_target(
 
 
 # =========================================================
-# Figura
+# VISUALIZE AUGMENTATIONS
 # =========================================================
 
-fig, axes = plt.subplots(
-    1,
-    2,
-    figsize=(12, 6),
-)
+def visualize_augmentations(
+    num_images=10,
+    seed=43,
+):
 
+    # -----------------------------------------------------
+    # Dataset originale
+    # -----------------------------------------------------
 
-current = 0
+    dataset = create_dataset(
+        transform=None
+    )
+
+    # -----------------------------------------------------
+    # Dataset trasformato
+    # -----------------------------------------------------
+
+    transformed_dataset = create_dataset(
+        transform=get_train_transforms(
+            image_size=224
+        )
+    )
+
+    # -----------------------------------------------------
+    # Positive images
+    # -----------------------------------------------------
+
+    positive_indices = get_positive_indices(
+        dataset
+    )
+
+    print(
+        "\nNumero immagini positive:",
+        len(positive_indices),
+    )
+
+    # -----------------------------------------------------
+    # Random selection
+    # -----------------------------------------------------
+
+    random.seed(seed)
+
+    num_images = min(
+        num_images,
+        len(positive_indices),
+    )
+
+    selected_indices = random.sample(
+        positive_indices,
+        num_images,
+    )
+
+    print(
+        "Indici selezionati:",
+        selected_indices,
+    )
+
+    # -----------------------------------------------------
+    # Figure
+    # -----------------------------------------------------
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(12, 6),
+    )
+
+    current = 0
+
+    # -----------------------------------------------------
+    # Show image
+    # -----------------------------------------------------
+
+    def show_image(position):
+
+        index = selected_indices[position]
+
+        # ---------------------------------------------
+        # Original
+        # ---------------------------------------------
+
+        original_image, original_target = (
+            dataset[index]
+        )
+
+        # ---------------------------------------------
+        # Transformed
+        # ---------------------------------------------
+
+        transformed_image, transformed_target = (
+            transformed_dataset[index]
+        )
+
+        # ---------------------------------------------
+        # Checks
+        # ---------------------------------------------
+
+        check_transformed_target(
+            original_target,
+            transformed_target,
+        )
+
+        # ---------------------------------------------
+        # Remove channel dimension
+        # ---------------------------------------------
+
+        original_image = (
+            original_image.squeeze(0)
+        )
+
+        transformed_image = (
+            transformed_image.squeeze(0)
+        )
+
+        # ---------------------------------------------
+        # Clear axes
+        # ---------------------------------------------
+
+        axes[0].clear()
+        axes[1].clear()
+
+        # ---------------------------------------------
+        # Draw
+        # ---------------------------------------------
+
+        draw_boxes(
+            axes[0],
+            original_image,
+            original_target,
+        )
+
+        draw_boxes(
+            axes[1],
+            transformed_image,
+            transformed_target,
+        )
+
+        # ---------------------------------------------
+        # Titles
+        # ---------------------------------------------
+
+        patient_id = (
+            dataset.image_paths[index].stem
+        )
+
+        axes[0].set_title(
+            f"Original | "
+            f"{position + 1}/{num_images}",
+            fontsize=11,
+        )
+
+        axes[1].set_title(
+            "Transformed",
+            fontsize=11,
+        )
+
+        fig.suptitle(
+            patient_id,
+            fontsize=9,
+        )
+
+        fig.tight_layout()
+
+        fig.canvas.draw_idle()
+
+    # -----------------------------------------------------
+    # Keyboard
+    # -----------------------------------------------------
+
+    def on_key(event):
+
+        nonlocal current
+
+        if event.key in [
+            "right",
+            "n",
+        ]:
+
+            current = (
+                current + 1
+            ) % num_images
+
+            show_image(current)
+
+        elif event.key in [
+            "left",
+            "p",
+        ]:
+
+            current = (
+                current - 1
+            ) % num_images
+
+            show_image(current)
+
+        elif event.key == "q":
+
+            plt.close(fig)
+
+    fig.canvas.mpl_connect(
+        "key_press_event",
+        on_key,
+    )
+
+    show_image(current)
+
+    plt.show()
 
 
 # =========================================================
-# Mostra immagine
+# MAIN
 # =========================================================
 
-def show_image(position):
-
-    index = selected_indices[position]
+if __name__ == "__main__":
 
     # -----------------------------------------------------
-    # Originale
+    # Test Dataset
+    # -----------------------------------------------------
+    """
+
+    dataset = create_dataset(
+        transform=get_train_transforms(
+            image_size=224
+        )
+    )
+    
+    check_dataset_item(
+        dataset,
+        index=0,
+    )
+    """
+    # -----------------------------------------------------
+    # Test DataLoader
     # -----------------------------------------------------
 
-    original_image, original_target = (
-        dataset[index]
+    check_dataloader(
+        batch_size=4,
     )
 
     # -----------------------------------------------------
-    # Trasformata
+    # Visual test
     # -----------------------------------------------------
 
-    transformed_image, transformed_target = (
-        transformed_dataset[index]
-    )
-
-    # -----------------------------------------------------
-    # Check
-    # -----------------------------------------------------
-
-    check_target(
-        original_target,
-        transformed_target,
-    )
-
-    # -----------------------------------------------------
-    # Rimuove il channel singleton
-    # [1, H, W] -> [H, W]
-    # -----------------------------------------------------
-
-    original_image = original_image.squeeze(0)
-
-    transformed_image = transformed_image.squeeze(0)
-
-    # -----------------------------------------------------
-    # Pulisce i pannelli
-    # -----------------------------------------------------
-
-    axes[0].clear()
-    axes[1].clear()
-
-    # -----------------------------------------------------
-    # Disegna originale
-    # -----------------------------------------------------
-
-    draw_boxes(
-        axes[0],
-        original_image,
-        original_target,
-    )
-
-    # -----------------------------------------------------
-    # Disegna trasformata
-    # -----------------------------------------------------
-
-    draw_boxes(
-        axes[1],
-        transformed_image,
-        transformed_target,
-    )
-
-    # -----------------------------------------------------
-    # Patient ID
-    # -----------------------------------------------------
-
-    patient_id = (
-        dataset.image_paths[index].stem
-    )
-
-    # -----------------------------------------------------
-    # Titoli
-    # -----------------------------------------------------
-
-    axes[0].set_title(
-        f"Original  |  {position + 1}/{num_images}",
-        fontsize=11,
-    )
-
-    axes[1].set_title(
-        "Transformed",
-        fontsize=11,
-    )
-
-    fig.suptitle(
-        patient_id,
-        fontsize=9,
-    )
-
-    fig.tight_layout()
-
-    fig.canvas.draw_idle()
-
-
-# =========================================================
-# Gestione tastiera
-# =========================================================
-
-def on_key(event):
-
-    global current
-
-    # -----------------------------------------------------
-    # Avanti
-    # -----------------------------------------------------
-
-    if event.key in [
-        "right",
-        "n",
-    ]:
-
-        current = (
-            current + 1
-        ) % num_images
-
-        show_image(current)
-
-    # -----------------------------------------------------
-    # Indietro
-    # -----------------------------------------------------
-
-    elif event.key in [
-        "left",
-        "p",
-    ]:
-
-        current = (
-            current - 1
-        ) % num_images
-
-        show_image(current)
-
-    # -----------------------------------------------------
-    # Esci
-    # -----------------------------------------------------
-
-    elif event.key == "q":
-
-        plt.close(fig)
-
-
-fig.canvas.mpl_connect(
-    "key_press_event",
-    on_key,
-)
-
-
-# =========================================================
-# Mostra la prima immagine
-# =========================================================
-
-show_image(current)
-
-plt.show()
+    """visualize_augmentations(
+        num_images=10,
+        seed=43,
+    )"""

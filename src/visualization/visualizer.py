@@ -1,9 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
 
-from src.models.backbone import Backbone
-from src.models.fpn import FPN
-
 
 class FeatureVisualizer:
 
@@ -17,21 +14,15 @@ class FeatureVisualizer:
         self.fpn = fpn
         self.max_channels = max_channels
 
-    # =====================================================
-    # Feature extraction
-    # =====================================================
-
     @torch.no_grad()
     def extract_features(self, x):
 
         self.backbone.eval()
         self.fpn.eval()
 
-        # Backbone features
         C2, C3, C4, C5 = self.backbone(x)
 
-        # FPN features
-        P2, P3, P4, P5 = self.fpn(x)
+        P3, P4, P5, P6, P7 = self.fpn(x)
 
         backbone_features = {
             "C2": C2,
@@ -41,17 +32,14 @@ class FeatureVisualizer:
         }
 
         fpn_features = {
-            "P2": P2,
             "P3": P3,
             "P4": P4,
             "P5": P5,
+            "P6": P6,
+            "P7": P7,
         }
 
         return backbone_features, fpn_features
-
-    # =====================================================
-    # Single feature map
-    # =====================================================
 
     def plot_feature_map(
         self,
@@ -86,14 +74,10 @@ class FeatureVisualizer:
         plt.tight_layout()
         plt.show()
 
-    # =====================================================
-    # Multiple channels from one level
-    # =====================================================
-
     def plot_channels(
         self,
         feature,
-        level_name, 
+        level_name,
         sample_index=0,
         num_channels=None,
     ):
@@ -117,7 +101,6 @@ class FeatureVisualizer:
             figsize=(15, 3 * rows),
         )
 
-        # Quando c'è una sola riga
         axes = axes.flatten()
 
         for channel_index in range(
@@ -147,7 +130,6 @@ class FeatureVisualizer:
 
             axes[channel_index].axis("off")
 
-        # Nasconde gli assi inutilizzati
         for index in range(
             num_channels,
             len(axes),
@@ -156,10 +138,6 @@ class FeatureVisualizer:
 
         plt.tight_layout()
         plt.show()
-
-    # =====================================================
-    # Backbone pyramid
-    # =====================================================
 
     def plot_backbone_pyramid(
         self,
@@ -175,10 +153,6 @@ class FeatureVisualizer:
             title="Backbone Feature Pyramid",
         )
 
-    # =====================================================
-    # FPN pyramid
-    # =====================================================
-
     def plot_fpn_pyramid(
         self,
         features,
@@ -193,10 +167,6 @@ class FeatureVisualizer:
             title="FPN Feature Pyramid",
         )
 
-    # =====================================================
-    # Generic pyramid plotting
-    # =====================================================
-
     def _plot_levels(
         self,
         features,
@@ -208,8 +178,11 @@ class FeatureVisualizer:
         fig, axes = plt.subplots(
             1,
             len(features),
-            figsize=(16, 4),
+            figsize=(4 * len(features), 4),
         )
+
+        if len(features) == 1:
+            axes = [axes]
 
         for ax, (level_name, feature) in zip(
             axes,
@@ -234,7 +207,7 @@ class FeatureVisualizer:
 
             ax.set_title(
                 f"{level_name}\n"
-                f"Channel {channel_index}"
+                f"{tuple(feature.shape)}"
             )
 
             ax.axis("off")
@@ -243,10 +216,6 @@ class FeatureVisualizer:
 
         plt.tight_layout()
         plt.show()
-
-    # =====================================================
-    # Complete visualization
-    # =====================================================
 
     def visualize(
         self,
@@ -275,16 +244,13 @@ class FeatureVisualizer:
             backbone_features,
             fpn_features,
         )
-    
-
-
 
     def plot_input_image(
         self,
         image,
         sample_index=0,
     ):
-        image = image[  
+        image = image[
             sample_index
         ].detach().cpu()
 

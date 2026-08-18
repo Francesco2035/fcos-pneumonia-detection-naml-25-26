@@ -3,6 +3,25 @@ import pandas as pd
 from torchvision import tv_tensors
 import torch
 from torchvision.transforms import v2
+from torch.utils.data import DataLoader
+
+
+
+def detection_collate_fn(batch):
+
+    images, targets = zip(*batch)
+
+    images = torch.stack(images)
+
+    targets = list(targets)
+
+    return images, targets
+
+
+
+
+
+
 
 class RSNAPneumoniaDataset(DICOMDataset):
 
@@ -84,7 +103,7 @@ class RSNAPneumoniaDataset(DICOMDataset):
             boxes = torch.tensor(
                 annotation["boxes"],
                 dtype=torch.float32,
-            )
+            ).reshape(-1, 4)
 
             labels = torch.tensor(
                 annotation["labels"],
@@ -124,8 +143,17 @@ class RSNAPneumoniaDataset(DICOMDataset):
             return image, target
     
 
-
-
-
-
-
+    def get_dataloader(
+        self,
+        batch_size=1,
+        shuffle=True,
+        num_workers=0,
+    ):
+        return DataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=detection_collate_fn,
+        )
+    

@@ -5,11 +5,13 @@ from src.models.fpn import FPN
 
 def main():
 
-    path  = '/home/legion/shared/Projects/NAML_25-26/checkpoints/resnet50_scratch_chest_xray_best.pth'
-    rel_path  ='checkpoints/resnet50_scratch_chest_xray_best.pth'
+    checkpoint_path = (
+        "checkpoints/resnet50_scratch_chest_xray_best.pth"
+    )
 
     device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
+        "cuda" if torch.cuda.is_available()
+        else "cpu"
     )
 
     print(f"Device: {device}")
@@ -27,12 +29,12 @@ def main():
     )
 
     # ---------------------------------
-    # FPN con backbone ImageNet
+    # FPN con backbone pre-addestrato
     # ---------------------------------
 
     model = FPN(
-        path_model= rel_path,
-        device=device
+        path_model=checkpoint_path,
+        device=device,
     ).to(device)
 
     model.eval()
@@ -43,7 +45,7 @@ def main():
 
     with torch.no_grad():
 
-        P2, P3, P4, P5 = model(x)
+        P3, P4, P5, P6, P7 = model(x)
 
     # ---------------------------------
     # Check shapes
@@ -51,10 +53,23 @@ def main():
 
     print("\nFPN output shapes:")
 
-    print("P2:", P2.shape)
     print("P3:", P3.shape)
     print("P4:", P4.shape)
     print("P5:", P5.shape)
+    print("P6:", P6.shape)
+    print("P7:", P7.shape)
+
+    # ---------------------------------
+    # Assertions
+    # ---------------------------------
+
+    assert P3.shape == (2, 256, 28, 28)
+    assert P4.shape == (2, 256, 14, 14)
+    assert P5.shape == (2, 256, 7, 7)
+    assert P6.shape == (2, 256, 4, 4)
+    assert P7.shape == (2, 256, 2, 2)
+
+    print("\n✓ FPN test passed")
 
 
 if __name__ == "__main__":

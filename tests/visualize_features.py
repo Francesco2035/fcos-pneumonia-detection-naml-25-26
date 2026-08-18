@@ -1,5 +1,4 @@
 import torch
-import matplotlib.pyplot as plt
 from PIL import Image
 from torchvision import transforms
 
@@ -49,6 +48,51 @@ def load_image(image_path):
 
 
 # =========================================================
+# Check feature shapes
+# =========================================================
+
+def check_feature_shapes(
+    backbone_features,
+    fpn_features,
+):
+
+    expected_backbone = {
+        "C2": (56, 56),
+        "C3": (28, 28),
+        "C4": (14, 14),
+        "C5": (7, 7),
+    }
+
+    expected_fpn = {
+        "P3": (28, 28),
+        "P4": (14, 14),
+        "P5": (7, 7),
+        "P6": (4, 4),
+        "P7": (2, 2),
+    }
+
+    for name, expected_size in expected_backbone.items():
+
+        actual_size = backbone_features[name].shape[-2:]
+
+        assert tuple(actual_size) == expected_size, (
+            f"{name}: expected {expected_size}, "
+            f"got {tuple(actual_size)}"
+        )
+
+    for name, expected_size in expected_fpn.items():
+
+        actual_size = fpn_features[name].shape[-2:]
+
+        assert tuple(actual_size) == expected_size, (
+            f"{name}: expected {expected_size}, "
+            f"got {tuple(actual_size)}"
+        )
+
+    print("\n✓ Feature shapes correct")
+
+
+# =========================================================
 # Main
 # =========================================================
 
@@ -60,9 +104,9 @@ def main():
     # Load image
     # -----------------------------------------------------
 
-    image = load_image(IMAGE_PATH)
-
-    image = image.to(DEVICE)
+    image = load_image(
+        IMAGE_PATH
+    ).to(DEVICE)
 
     print(
         f"Input shape: {image.shape}"
@@ -95,21 +139,23 @@ def main():
         fpn=fpn,
         max_channels=10,
     )
-    
+
     # -----------------------------------------------------
     # Original image
     # -----------------------------------------------------
+
     visualizer.plot_input_image(
-        image,
+        image
     )
 
-
     # -----------------------------------------------------
-    # Extract and visualize
+    # Extract features
     # -----------------------------------------------------
 
     backbone_features, fpn_features = (
-        visualizer.extract_features(image)
+        visualizer.extract_features(
+            image
+        )
     )
 
     # -----------------------------------------------------
@@ -131,6 +177,15 @@ def main():
         print(
             f"{name}: {feature.shape}"
         )
+
+    # -----------------------------------------------------
+    # Check shapes
+    # -----------------------------------------------------
+
+    check_feature_shapes(
+        backbone_features,
+        fpn_features,
+    )
 
     # -----------------------------------------------------
     # Visualize Backbone
