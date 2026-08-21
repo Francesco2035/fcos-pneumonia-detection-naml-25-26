@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 
@@ -5,6 +6,7 @@ from src.models.backbone import Backbone
 
 
 class FPN(nn.Module):
+        
     """
         Feature Pyramid Network used to build the five feature levels required
         by the FCOS detector.
@@ -15,24 +17,21 @@ class FPN(nn.Module):
         modifying the ResNet backbone itself.
     """
 
-    def __init__(self, path_model, device):
+    def __init__(self, path_model):
         super().__init__()
 
         self.backbone = Backbone(
-            path_model,
-            device
+            path_model
         )
 
         self.upsampling = nn.UpsamplingNearest2d(
             scale_factor=2
         )
 
-        # C3, C4, C5 -> 256 channels
         self.lat_c3 = nn.Conv2d(512, 256, 1)
         self.lat_c4 = nn.Conv2d(1024, 256, 1)
         self.lat_c5 = nn.Conv2d(2048, 256, 1)
 
-        # 3x3 convolutions for feature refinement
         self.conv_p3 = nn.Conv2d(
             256, 256, 3, padding=1
         )
@@ -45,8 +44,6 @@ class FPN(nn.Module):
             256, 256, 3, padding=1
         )
 
-        # The ResNet backbone ends at stride 32.
-        # P6 and P7 extend the pyramid to strides 64 and 128.
         self.conv_p6 = nn.Conv2d(
             256, 256,
             kernel_size=3,
@@ -65,7 +62,6 @@ class FPN(nn.Module):
 
         C2, C3, C4, C5 = self.backbone(x)
 
-        # C2 has stride 4 and is not used in the FCOS pyramid.
         P5 = self.lat_c5(C5)
         P5 = self.conv_p5(P5)
 
@@ -77,7 +73,6 @@ class FPN(nn.Module):
         P3 = P3 + self.upsampling(P4)
         P3 = self.conv_p3(P3)
 
-        # Extend the pyramid with two additional levels.
         P6 = self.conv_p6(P5)
 
         P7 = self.conv_p7(

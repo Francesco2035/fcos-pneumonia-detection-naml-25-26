@@ -1,20 +1,18 @@
 import torch.nn as nn
 
-from fpn import FPN
-from detection_head import DetectionHead
+from src.models.fpn import FPN
+from src.models.detection_head import DetectionHead
 
 
 class DetectionFramework(nn.Module):
-    def __init__(self, path_model, device):
+
+    def __init__(self, path_model=None):
         super().__init__()
 
-        # Feature Pyramid Network
         self.fpn = FPN(
-            path_model=path_model,
-            device=device,
+            path_model=path_model
         )
 
-        # One detection head for each FPN level
         self.head3 = DetectionHead(
             in_channels=256,
             hidden_channels=256,
@@ -52,10 +50,8 @@ class DetectionFramework(nn.Module):
 
     def forward(self, x):
 
-        # Feature pyramid
         P3, P4, P5, P6, P7 = self.fpn(x)
 
-        # Detection heads
         center3, scale3 = self.head3(P3)
         center4, scale4 = self.head4(P4)
         center5, scale5 = self.head5(P5)
