@@ -2,16 +2,21 @@ import torch.nn as nn
 
 
 class DetectionHead(nn.Module):
+
     def __init__(
         self,
         in_channels: int,
         hidden_channels: int,
-        center_channels: int,
-        scale_channels: int,
+        classification_channels: int,
+        regression_channels: int,
+        centerness_channels: int,
     ):
         super().__init__()
 
-        # Shared 3x3 convolution
+        # -----------------------------------------------------
+        # Shared feature convolution
+        # -----------------------------------------------------
+
         self.feature_conv = nn.Conv2d(
             in_channels=in_channels,
             out_channels=hidden_channels,
@@ -20,25 +25,54 @@ class DetectionHead(nn.Module):
             padding=1,
         )
 
-        # Center branch: one prediction per location
-        self.center_conv = nn.Conv2d(
+        # -----------------------------------------------------
+        # Classification branch
+        #
+        # Binary classification:
+        # 1 logit per location
+        # -----------------------------------------------------
+
+        self.classification_conv = nn.Conv2d(
             in_channels=hidden_channels,
-            out_channels=center_channels,
+            out_channels=classification_channels,
             kernel_size=1,
         )
 
-        # Scale branch: four regression values per location
-        self.scale_conv = nn.Conv2d(
+        # -----------------------------------------------------
+        # Regression branch
+        #
+        # 4 values per location:
+        # left, top, right, bottom
+        # -----------------------------------------------------
+
+        self.regression_conv = nn.Conv2d(
             in_channels=hidden_channels,
-            out_channels=scale_channels,
+            out_channels=regression_channels,
             kernel_size=1,
         )
 
+        # -----------------------------------------------------
+        # Center-ness branch
+        #
+        # 1 value per location
+        # -----------------------------------------------------
+
+        self.centerness_conv = nn.Conv2d(
+            in_channels=hidden_channels,
+            out_channels=centerness_channels,
+            kernel_size=1,
+        )
 
     def forward(self, x):
+
+        # Shared features
         features = self.feature_conv(x)
 
-        center = self.center_conv(features)
-        scale = self.scale_conv(features)
+        # Three prediction branches
+        classification = self.classification_conv(features)
 
-        return center, scale
+        regression = self.regression_conv(features)
+
+        centerness = self.centerness_conv(features)
+
+        return classification, regression, centerness

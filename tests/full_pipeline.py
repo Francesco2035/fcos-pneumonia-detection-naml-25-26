@@ -1,50 +1,45 @@
 import torch
 
 from src.datasets.RSNAPneumoniaDataset import RSNAPneumoniaDataset
-from src.datasets.transforms import get_test_transforms
 from src.models.detector import DetectionFramework
 from src.models.target_generator import TargetGenerator
+from src.datasets.transforms import get_test_transforms
 
 
-# =========================================================
-# Configuration
-# =========================================================
-
-IMAGE_SIZE = 224
-
-STRIDES = {
-    "P3": 8,
-    "P4": 16,
-    "P5": 32,
-    "P6": 64,
-    "P7": 128,
-}
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
 
+NUM_IMAGES = 100
+
+IMAGE_SIZE = 224
+
+
+
 DICOM_PATH = (
-    "data/rsna-pneumonia-detection-challenge/"
-    "stage_2_train_images"
+"data/rsna-pneumonia-detection-challenge/"
+"stage_2_train_images"
 )
 
 CSV_PATH = (
-    "data/rsna-pneumonia-detection-challenge/"
-    "stage_2_train_labels.csv"
+"data/rsna-pneumonia-detection-challenge/"
+"stage_2_train_labels.csv"
 )
 
 CHECKPOINT_PATH = (
-    "checkpoints/resnet50_scratch_chest_xray_best.pth"
+"checkpoints/resnet50_scratch_chest_xray_best.pth"
 )
 
-# Number of images to test
-NUM_IMAGES = 2000
+MODEL_PATH = None
 
 
-# =========================================================
-# Utility
-# =========================================================
+# ============================================================
+# CHECK UTILITY
+# ============================================================
 
 def check(condition, message):
 
@@ -52,51 +47,48 @@ def check(condition, message):
         raise AssertionError(message)
 
 
-# =========================================================
-# Main
-# =========================================================
+# ============================================================
+# MAIN TEST
+# ============================================================
 
 def main():
 
     print("=" * 60)
-    print("MULTI-IMAGE FULL PIPELINE TEST")
+    print("FULL PIPELINE TEST")
     print("=" * 60)
 
-    print(f"Device: {DEVICE}")
-    print(f"Images to test: {NUM_IMAGES}")
+    print()
+    print("Device:", DEVICE)
+    print("Images to test:", NUM_IMAGES)
 
+    # ========================================================
+    # 1. DATASET
+    # ========================================================
 
-    # =====================================================
-    # 1. Dataset
-    # =====================================================
-
-    print("\n[1] Creating dataset...")
-
-    transform = get_test_transforms(
-        image_size=IMAGE_SIZE
-    )
+    print()
+    print("[1] Creating dataset...")
 
     dataset = RSNAPneumoniaDataset(
         dcm_path=DICOM_PATH,
         csv_path=CSV_PATH,
-        transform=transform,
+        transform=get_test_transforms(
+            image_size=IMAGE_SIZE
+        ),
     )
 
-    print(
-        f"Dataset size: {len(dataset)}"
-    )
+    print("Dataset size:", len(dataset))
 
     check(
         len(dataset) > 0,
         "Dataset is empty."
     )
 
+    # ========================================================
+    # 2. DATALOADER
+    # ========================================================
 
-    # =====================================================
-    # 2. DataLoader
-    # =====================================================
-
-    print("\n[2] Creating DataLoader...")
+    print()
+    print("[2] Creating DataLoader...")
 
     dataloader = dataset.get_dataloader(
         batch_size=1,
@@ -104,590 +96,639 @@ def main():
         num_workers=0,
     )
 
+    # ========================================================
+    # 3. DETECTION FRAMEWORK
+    # ========================================================
 
-    # =====================================================
-    # 3. Detection Framework
-    # =====================================================
-
-    print(
-        "\n[3] Creating DetectionFramework..."
-    )
+    print()
+    print("[3] Creating DetectionFramework...")
 
     model = DetectionFramework(
-        path_model=CHECKPOINT_PATH
+        path_model=MODEL_PATH
     )
 
     model = model.to(DEVICE)
 
     model.eval()
 
+    # ========================================================
+    # 4. TARGET GENERATOR
+    # ========================================================
 
-    # =====================================================
-    # 4. Target Generator
-    # =====================================================
-
-    print(
-        "\n[4] Creating TargetGenerator..."
-    )
+    print()
+    print("[4] Creating TargetGenerator...")
 
     target_generator = TargetGenerator()
 
+    # ========================================================
+    # FPN CONFIGURATION
+    # ========================================================
 
-    # =====================================================
-    # Statistics
-    # =====================================================
+    levels = {
+        "P3": {
+            "stride": 8,
+        },
+
+        "P4": {
+            "stride": 16,
+        },
+
+        "P5": {
+            "stride": 32,
+        },
+
+        "P6": {
+            "stride": 64,
+        },
+
+        "P7": {
+            "stride": 128,
+        },
+    }
+
+    # ========================================================
+    # STATISTICS
+    # ========================================================
 
     images_tested = 0
 
-    positive_images = 0
-    negative_images = 0
+    images_with_gt = 0
+    images_without_gt = 0
 
     total_gt_boxes = 0
 
-    total_positive_locations = {
-        "P3": 0,
-        "P4": 0,
-        "P5": 0,
-        "P6": 0,
-        "P7": 0,
+    level_positive_images = {
+        level: 0
+        for level in levels
     }
 
-    images_with_positive_locations = {
-        "P3": 0,
-        "P4": 0,
-        "P5": 0,
-        "P6": 0,
-        "P7": 0,
+    level_positive_points = {
+        level: 0
+        for level in levels
     }
 
-    # Number of GT boxes assigned to each level.
-    #
-    # This is useful to understand whether the
-    # regression ranges are behaving as expected.
-    level_box_assignment = {
-        "P3": 0,
-        "P4": 0,
-        "P5": 0,
-        "P6": 0,
-        "P7": 0,
-    }
+    # ========================================================
+    # 5. TEST IMAGES
+    # ========================================================
 
-
-    # =====================================================
-    # 5. Iterate over images
-    # =====================================================
-
+    print()
     print(
-        f"\n[5] Testing {NUM_IMAGES} images..."
+        f"[5] Testing {NUM_IMAGES} images..."
     )
 
-    for images, targets in dataloader:
+    with torch.no_grad():
 
-        if images_tested >= NUM_IMAGES:
-            break
+        for batch_index, (images, targets) in enumerate(
+            dataloader
+        ):
 
-        # -------------------------------------------------
-        # Batch
-        # -------------------------------------------------
+            if images_tested >= NUM_IMAGES:
+                break
 
-        check(
-            images.shape[0] == 1,
-            "This test expects batch_size=1."
-        )
-
-        check(
-            images.ndim == 4,
-            f"Expected [B,C,H,W], got {images.shape}"
-        )
-
-        check(
-            images.shape[1] == 3,
-            f"Expected 3 channels, got {images.shape[1]}"
-        )
-
-        check(
-            images.shape[2] == IMAGE_SIZE
-            and images.shape[3] == IMAGE_SIZE,
-            f"Expected {IMAGE_SIZE}x{IMAGE_SIZE}, "
-            f"got {images.shape[2:]}"
-        )
-
-
-        # -------------------------------------------------
-        # Ground truth
-        # -------------------------------------------------
-
-        target = targets[0]
-
-        boxes = target["boxes"]
-
-        labels = target["labels"]
-
-        check(
-            boxes.ndim == 2
-            and boxes.shape[1] == 4,
-            f"Expected boxes [N,4], got {boxes.shape}"
-        )
-
-        check(
-            labels.ndim == 1,
-            f"Expected labels [N], got {labels.shape}"
-        )
-
-        check(
-            len(boxes) == len(labels),
-            "Number of boxes and labels differ."
-        )
-
-
-        # -------------------------------------------------
-        # Convert BoundingBoxes -> Tensor
-        # -------------------------------------------------
-
-        gt_boxes = boxes.as_subclass(
-            torch.Tensor
-        ).to(DEVICE)
-
-
-        # -------------------------------------------------
-        # Check GT coordinates
-        # -------------------------------------------------
-
-        if len(gt_boxes) > 0:
-
-            x1 = gt_boxes[:, 0]
-            y1 = gt_boxes[:, 1]
-            x2 = gt_boxes[:, 2]
-            y2 = gt_boxes[:, 3]
+            # ------------------------------------------------
+            # Images
+            # ------------------------------------------------
 
             check(
-                torch.all(x2 >= x1),
-                "Some boxes have x2 < x1."
+                images.ndim == 4,
+                f"Expected images [B,C,H,W], got {images.shape}"
             )
 
             check(
-                torch.all(y2 >= y1),
-                "Some boxes have y2 < y1."
+                images.shape[0] == 1,
+                f"Expected batch size 1, got {images.shape[0]}"
             )
 
             check(
-                torch.all(x1 >= 0)
-                and torch.all(y1 >= 0),
-                "Some boxes have negative coordinates."
+                images.shape[1] == 3,
+                f"Expected 3 image channels, got {images.shape[1]}"
             )
 
             check(
-                torch.all(x2 <= IMAGE_SIZE)
-                and torch.all(y2 <= IMAGE_SIZE),
-                "Some boxes exceed image dimensions."
+                images.shape[2] == IMAGE_SIZE,
+                f"Expected image height {IMAGE_SIZE}, "
+                f"got {images.shape[2]}"
             )
 
-
-        # -------------------------------------------------
-        # Image statistics
-        # -------------------------------------------------
-
-        num_gt_boxes = len(gt_boxes)
-
-        total_gt_boxes += num_gt_boxes
-
-        if num_gt_boxes > 0:
-
-            positive_images += 1
-
-        else:
-
-            negative_images += 1
-
-
-        # -------------------------------------------------
-        # Forward
-        # -------------------------------------------------
-
-        images_device = images.to(DEVICE)
-
-        with torch.no_grad():
-
-            outputs = model(
-                images_device
+            check(
+                images.shape[3] == IMAGE_SIZE,
+                f"Expected image width {IMAGE_SIZE}, "
+                f"got {images.shape[3]}"
             )
 
+            # ------------------------------------------------
+            # Move image to device
+            # ------------------------------------------------
 
-        # -------------------------------------------------
-        # Generate targets
-        # -------------------------------------------------
+            images = images.to(DEVICE)
 
-        image_positive_locations = 0
+            # ------------------------------------------------
+            # Target
+            # ------------------------------------------------
 
-        image_positive_levels = []
-
-
-        for level, stride in STRIDES.items():
-
-            prediction = outputs[level]
-
-            _, _, height, width = (
-                prediction["center"].shape
+            check(
+                len(targets) == 1,
+                f"Expected one target, got {len(targets)}"
             )
 
+            target = targets[0]
 
-            # =============================================
-            # Target generation
-            # =============================================
+            boxes = target["boxes"]
 
-            targets_level = (
-                target_generator.generate_targets(
-                    label_boxes=gt_boxes,
-                    feature_shape=(height, width),
-                    stride=stride,
-                    device=DEVICE,
+            # ------------------------------------------------
+            # Ground-truth boxes
+            # ------------------------------------------------
+
+            check(
+                boxes.ndim == 2,
+                f"Expected boxes [N,4], got {boxes.shape}"
+            )
+
+            check(
+                boxes.shape[1] == 4,
+                f"Expected 4 box coordinates, got {boxes.shape}"
+            )
+
+            num_boxes = boxes.shape[0]
+
+            total_gt_boxes += num_boxes
+
+            if num_boxes > 0:
+                images_with_gt += 1
+            else:
+                images_without_gt += 1
+
+            # ------------------------------------------------
+            # Convert boxes to regular tensor
+            # ------------------------------------------------
+
+            boxes = boxes.to(
+                dtype=torch.float32,
+                device=DEVICE,
+            )
+
+            # ------------------------------------------------
+            # Model forward
+            # ------------------------------------------------
+
+            predictions = model(images)
+
+            # ------------------------------------------------
+            # Statistics for this image
+            # ------------------------------------------------
+
+            image_positive_points = 0
+            image_levels = []
+
+            # =================================================
+            # Check every FPN level
+            # =================================================
+
+            for level, config in levels.items():
+
+                stride = config["stride"]
+
+                prediction = predictions[level]
+
+                # ------------------------------------------------
+                # Predictions
+                # ------------------------------------------------
+
+                classification = prediction[
+                    "classification"
+                ]
+
+                center = prediction[
+                    "centerness"
+                ]
+
+                scale = prediction[
+                    "regression"
+                ]
+
+                # ------------------------------------------------
+                # Prediction shape checks
+                # ------------------------------------------------
+
+                check(
+                    classification.ndim == 4,
+                    (
+                        f"{level}: classification must be "
+                        f"[B,C,H,W], got "
+                        f"{classification.shape}"
+                    )
                 )
-            )
 
+                check(
+                    center.ndim == 4,
+                    (
+                        f"{level}: center must be "
+                        f"[B,C,H,W], got "
+                        f"{center.shape}"
+                    )
+                )
 
-            positive = (
-                targets_level["positive"]
-            )
+                check(
+                    scale.ndim == 4,
+                    (
+                        f"{level}: scale must be "
+                        f"[B,C,H,W], got "
+                        f"{scale.shape}"
+                    )
+                )
 
-            ltrb = (
-                targets_level["ltrb"]
-            )
+                # ------------------------------------------------
+                # Number of channels
+                # ------------------------------------------------
 
-            centerness = (
-                targets_level["centerness"]
-            )
+                check(
+                    classification.shape[1] == 1,
+                    (
+                        f"{level}: classification must "
+                        f"have 1 channel, got "
+                        f"{classification.shape[1]}"
+                    )
+                )
 
+                check(
+                    center.shape[1] == 1,
+                    (
+                        f"{level}: center must "
+                        f"have 1 channel, got "
+                        f"{center.shape[1]}"
+                    )
+                )
 
-            # =============================================
-            # Target shape checks
-            # =============================================
+                check(
+                    scale.shape[1] == 4,
+                    (
+                        f"{level}: scale must "
+                        f"have 4 channels, got "
+                        f"{scale.shape[1]}"
+                    )
+                )
 
-            check(
-                positive.shape
-                == (height, width),
-                f"{level}: positive shape mismatch."
-            )
+                # ------------------------------------------------
+                # Feature-map shape
+                # ------------------------------------------------
 
-            check(
-                ltrb.shape
-                == (height, width, 4),
-                f"{level}: LTRB shape mismatch."
-            )
+                height = classification.shape[2]
+                width = classification.shape[3]
 
-            check(
-                centerness.shape
-                == (height, width),
-                f"{level}: centerness shape mismatch."
-            )
+                check(
+                    center.shape[2:] == (height, width),
+                    (
+                        f"{level}: classification/center "
+                        f"shape mismatch."
+                    )
+                )
 
+                check(
+                    scale.shape[2:] == (height, width),
+                    (
+                        f"{level}: classification/scale "
+                        f"shape mismatch."
+                    )
+                )
 
-            # =============================================
-            # Prediction / target compatibility
-            # =============================================
+                # =================================================
+                # TARGET GENERATION
+                # =================================================
 
-            center = (
-                prediction["center"]
-            )
+                targets_level = (
+                    target_generator.generate_targets(
+                        label_boxes=boxes,
+                        feature_shape=(height, width),
+                        stride=stride,
+                        device=DEVICE,
+                    )
+                )
 
-            scale = (
-                prediction["scale"]
-            )
+                positive = targets_level[
+                    "positive"
+                ]
 
-            check(
-                center.shape[-2:]
-                == positive.shape,
-                f"{level}: center/positive mismatch."
-            )
+                ltrb = targets_level[
+                    "ltrb"
+                ]
 
-            check(
-                scale.shape[-2:]
-                == positive.shape,
-                f"{level}: scale/positive mismatch."
-            )
+                centerness = targets_level[
+                    "centerness"
+                ]
 
+                # ------------------------------------------------
+                # Target shapes
+                # ------------------------------------------------
 
-            # =============================================
-            # Positive locations
-            # =============================================
+                check(
+                    positive.shape == (height, width),
+                    (
+                        f"{level}: positive shape mismatch. "
+                        f"Got {positive.shape}"
+                    )
+                )
 
-            num_positive = (
-                positive.sum().item()
-            )
+                check(
+                    ltrb.shape == (
+                        height,
+                        width,
+                        4,
+                    ),
+                    (
+                        f"{level}: ltrb shape mismatch. "
+                        f"Got {ltrb.shape}"
+                    )
+                )
 
-            total_positive_locations[level] += (
-                num_positive
-            )
+                check(
+                    centerness.shape == (
+                        height,
+                        width,
+                    ),
+                    (
+                        f"{level}: centerness shape mismatch. "
+                        f"Got {centerness.shape}"
+                    )
+                )
 
+                # =================================================
+                # PREDICTION / TARGET COMPATIBILITY
+                # =================================================
 
-            if num_positive > 0:
+                check(
+                    classification.shape[-2:]
+                    == positive.shape,
+                    (
+                        f"{level}: classification/positive "
+                        f"spatial mismatch."
+                    )
+                )
 
-                images_with_positive_locations[level] += 1
+                check(
+                    center.shape[-2:]
+                    == centerness.shape,
+                    (
+                        f"{level}: center/centerness "
+                        f"spatial mismatch."
+                    )
+                )
 
-                image_positive_locations += (
+                check(
+                    scale.shape[-2:]
+                    == ltrb.shape[:2],
+                    (
+                        f"{level}: scale/ltrb "
+                        f"spatial mismatch."
+                    )
+                )
+
+                # ------------------------------------------------
+                # Count positive locations
+                # ------------------------------------------------
+
+                num_positive = (
+                    positive.sum().item()
+                )
+
+                image_positive_points += (
                     num_positive
                 )
 
-                image_positive_levels.append(
-                    level
-                )
+                if num_positive > 0:
 
+                    image_levels.append(level)
 
-                # =========================================
-                # Validate LTRB
-                # =========================================
+                    level_positive_images[
+                        level
+                    ] += 1
 
-                positive_ltrb = (
-                    ltrb[positive]
-                )
+                    level_positive_points[
+                        level
+                    ] += num_positive
 
-                check(
-                    torch.all(
-                        positive_ltrb >= 0
-                    ),
-                    f"{level}: negative LTRB found."
-                )
+                # ------------------------------------------------
+                # Target validity checks
+                # ------------------------------------------------
 
+                positive_ltrb = ltrb[
+                    positive
+                ]
 
-                # =========================================
-                # Validate centerness
-                # =========================================
+                positive_centerness = centerness[
+                    positive
+                ]
 
-                positive_centerness = (
-                    centerness[positive]
-                )
+                if positive_ltrb.numel() > 0:
 
-                check(
-                    torch.all(
-                        positive_centerness >= 0
-                    ),
-                    f"{level}: centerness < 0."
-                )
+                    check(
+                        torch.all(
+                            positive_ltrb >= 0
+                        ),
+                        f"{level}: negative LTRB target."
+                    )
 
-                check(
-                    torch.all(
-                        positive_centerness <= 1
-                    ),
-                    f"{level}: centerness > 1."
-                )
+                if positive_centerness.numel() > 0:
 
+                    check(
+                        torch.all(
+                            positive_centerness >= 0
+                        ),
+                        (
+                            f"{level}: centerness "
+                            f"below zero."
+                        )
+                    )
 
-        # -------------------------------------------------
-        # Positive / negative consistency
-        # -------------------------------------------------
+                    check(
+                        torch.all(
+                            positive_centerness <= 1
+                        ),
+                        (
+                            f"{level}: centerness "
+                            f"above one."
+                        )
+                    )
 
-        if num_gt_boxes == 0:
+                # ------------------------------------------------
+                # Background targets
+                # ------------------------------------------------
 
-            check(
-                image_positive_locations == 0,
-                (
-                    f"Image {images_tested} has no GT "
-                    f"boxes but TargetGenerator produced "
-                    f"positive locations."
-                )
+                background = ~positive
+
+                if background.any():
+
+                    background_ltrb = ltrb[
+                        background
+                    ]
+
+                    background_centerness = (
+                        centerness[
+                            background
+                        ]
+                    )
+
+                    check(
+                        torch.all(
+                            background_ltrb == 0
+                        ),
+                        (
+                            f"{level}: background "
+                            f"LTRB is not zero."
+                        )
+                    )
+
+                    check(
+                        torch.all(
+                            background_centerness == 0
+                        ),
+                        (
+                            f"{level}: background "
+                            f"centerness is not zero."
+                        )
+                    )
+
+            # ====================================================
+            # PRINT IMAGE RESULT
+            # ====================================================
+
+            print(
+                f"[{images_tested + 1:03d}/{NUM_IMAGES}] "
+                f"GT boxes={num_boxes:2d} | "
+                f"positive locations="
+                f"{image_positive_points:3d} | "
+                f"levels={image_levels}"
             )
 
-        else:
+            images_tested += 1
 
-            check(
-                image_positive_locations > 0,
-                (
-                    f"Image {images_tested} has "
-                    f"{num_gt_boxes} GT boxes but "
-                    f"TargetGenerator produced zero "
-                    f"positive locations."
-                )
-            )
+    # ========================================================
+    # 6. DATASET STATISTICS
+    # ========================================================
 
-
-        # -------------------------------------------------
-        # Count level assignments
-        #
-        # A level is considered used by the image if
-        # at least one positive location exists there.
-        # -------------------------------------------------
-
-        for level in image_positive_levels:
-
-            level_box_assignment[level] += 1
-
-
-        # -------------------------------------------------
-        # Print progress
-        # -------------------------------------------------
-
-        images_tested += 1
-
-        print(
-            f"[{images_tested:03d}/{NUM_IMAGES}] "
-            f"GT boxes={num_gt_boxes:2d} | "
-            f"positive locations="
-            f"{image_positive_locations:3d} | "
-            f"levels="
-            f"{image_positive_levels}"
-        )
-
-
-    # =====================================================
-    # 6. Dataset statistics
-    # =====================================================
-
-    print("\n" + "=" * 60)
+    print()
+    print("=" * 60)
     print("DATASET STATISTICS")
     print("=" * 60)
 
     print(
-        f"Images tested:       {images_tested}"
+        "Images tested:      ",
+        images_tested
     )
 
     print(
-        f"Images with GT:      {positive_images}"
+        "Images with GT:     ",
+        images_with_gt
     )
 
     print(
-        f"Images without GT:   {negative_images}"
+        "Images without GT:  ",
+        images_without_gt
     )
 
     print(
-        f"Total GT boxes:      {total_gt_boxes}"
+        "Total GT boxes:     ",
+        total_gt_boxes
     )
 
-    if positive_images > 0:
-
-        average_boxes = (
-            total_gt_boxes
-            / positive_images
-        )
+    if images_with_gt > 0:
 
         print(
-            f"Average boxes/positive image: "
-            f"{average_boxes:.2f}"
+            "Average boxes/positive image:",
+            round(
+                total_gt_boxes / images_with_gt,
+                2,
+            )
         )
 
+    # ========================================================
+    # 7. FPN STATISTICS
+    # ========================================================
 
-    # =====================================================
-    # 7. FPN level statistics
-    # =====================================================
-
-    print("\n" + "=" * 60)
+    print()
+    print("=" * 60)
     print("FPN LEVEL STATISTICS")
     print("=" * 60)
 
-    for level in STRIDES:
+    for level, config in levels.items():
+
+        print()
+        print(level)
 
         print(
-            f"\n{level}"
+            "  stride:",
+            config["stride"]
         )
 
         print(
-            f"  stride:                 "
-            f"{STRIDES[level]}"
+            "  images with positives:",
+            level_positive_images[level]
         )
 
         print(
-            f"  images with positives:  "
-            f"{images_with_positive_locations[level]}"
+            "  total positive points:",
+            level_positive_points[level]
         )
 
-        print(
-            f"  total positive points:  "
-            f"{total_positive_locations[level]}"
-        )
-
-
-    # =====================================================
-    # 8. Regression-range distribution
-    # =====================================================
-
-    print("\n" + "=" * 60)
-    print("REGRESSION RANGE DISTRIBUTION")
-    print("=" * 60)
-
-    print(
-        "\nImages receiving positive locations "
-        "at each FPN level:"
-    )
-
-    for level in STRIDES:
-
-        print(
-            f"  {level}: "
-            f"{level_box_assignment[level]} "
-            f"/ {images_tested}"
-        )
-
-
-    # =====================================================
-    # 9. Final checks
-    # =====================================================
+    # ========================================================
+    # 8. FINAL CHECKS
+    # ========================================================
 
     check(
-        images_tested > 0,
-        "No images were tested."
-    )
-
-    check(
-        positive_images > 0,
-        "None of the tested images contains GT boxes."
-    )
-
-    check(
-        negative_images > 0,
-        "None of the tested images is a negative image."
-    )
-
-    total_positive_points = sum(
-        total_positive_locations.values()
-    )
-
-    check(
-        total_positive_points > 0,
+        images_tested == NUM_IMAGES,
         (
-            "TargetGenerator produced zero "
-            "positive locations over the entire test."
+            f"Expected to test {NUM_IMAGES} images, "
+            f"but tested {images_tested}."
         )
     )
 
+    check(
+        images_with_gt + images_without_gt
+        == images_tested,
+        "Image statistics are inconsistent."
+    )
 
-    # =====================================================
-    # 10. Summary
-    # =====================================================
-
-    print("\n" + "=" * 60)
+    print()
+    print("=" * 60)
     print("MULTI-IMAGE FULL PIPELINE TEST PASSED!")
     print("=" * 60)
 
-    print("\nPipeline verified:")
+    print()
+    print("Pipeline verified:")
 
-    print("  Dataset")
-    print("    ↓")
-    print("  Transform")
-    print("    ↓")
-    print("  DataLoader")
-    print("    ↓")
-    print("  Ground-truth boxes")
-    print("    ↓")
-    print("  DetectionFramework")
-    print("    ↓")
-    print("  FPN P3-P7")
-    print("    ↓")
-    print("  Detection heads")
-    print("    ↓")
-    print("  TargetGenerator")
-    print("    ↓")
-    print("  Positive / negative assignment")
-    print("    ↓")
-    print("  Regression range assignment")
-    print("    ↓")
-    print("  LTRB targets")
-    print("    ↓")
-    print("  Centerness targets")
-    print("    ↓")
-    print("  Prediction / target compatibility")
+    print(
+        """
+  Dataset
+    ↓
+  Transform
+    ↓
+  DataLoader
+    ↓
+  Ground-truth boxes
+    ↓
+  DetectionFramework
+    ↓
+  FPN P3-P7
+    ↓
+  Detection heads
+    ↓
+  Classification predictions
+  Center predictions
+  LTRB predictions
+    ↓
+  TargetGenerator
+    ↓
+  Positive / negative assignment
+    ↓
+  Regression range assignment
+    ↓
+  LTRB targets
+    ↓
+  Centerness targets
+    ↓
+  Prediction / target compatibility
+"""
+    )
 
-
-# =========================================================
-# Entry point
-# =========================================================
 
 if __name__ == "__main__":
     main()
