@@ -48,7 +48,7 @@ SEED = 42
 # DATALOADER
 # ============================================================
 
-BATCH_SIZE = 4
+BATCH_SIZE = 8
 
 TRAIN_NUM_WORKERS = 12
 VAL_NUM_WORKERS = 4
