@@ -62,7 +62,7 @@ VAL_SHUFFLE = False
 # OPTIMIZATION
 # ============================================================
 
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-3
 
 WEIGHT_DECAY = 0.0
 
