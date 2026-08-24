@@ -62,11 +62,11 @@ VAL_SHUFFLE = False
 # OPTIMIZATION
 # ============================================================
 
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-4
 
 WEIGHT_DECAY = 0.0
 
-NUM_EPOCHS = 100
+NUM_EPOCHS = 10
 
 
 # ============================================================

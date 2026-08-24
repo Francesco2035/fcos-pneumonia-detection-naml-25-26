@@ -7,11 +7,11 @@ import torch.multiprocessing as mp
 mp.set_sharing_strategy("file_system")
 # PyTorch DataLoader workers use OS file descriptors to communicate
 # and share tensors between processes. With multiple workers, the
-# default per-process file-descriptor limit (often 1024) can be
-# exceeded, causing "Too many open files" errors.
+# default per-process file-descriptor limit (often 1024) can be exceeded,
+# causing "Too many open files" errors.
 #
-# "file_system" reduces the dependency on file descriptors for
-# tensor sharing. The shell command:
+# "file_system" reduces the dependency on file descriptors for tensor sharing.
+# The shell command:
 #
 #     ulimit -n 65535
 #
@@ -68,7 +68,6 @@ from src.train import Trainer
 # ============================================================
 
 def parse_args():
-
     parser = argparse.ArgumentParser(
         description="Train FCOS-like pneumonia detector."
     )
@@ -126,6 +125,21 @@ def parse_args():
         ),
     )
 
+    # ---------------------------------------------------------
+    # Load only weights
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--load-weights",
+        type=str,
+        default=None,
+        help=(
+            "Load only model weights from a checkpoint. "
+            "Optimizer, scheduler, epoch, global step and "
+            "best metric are NOT restored."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -137,7 +151,6 @@ def _count_parameters(module):
     """
     Count all parameters in a module.
     """
-
     return sum(
         parameter.numel()
         for parameter in module.parameters()
@@ -148,7 +161,6 @@ def _count_trainable_parameters(module):
     """
     Count trainable parameters in a module.
     """
-
     return sum(
         parameter.numel()
         for parameter in module.parameters()
@@ -324,12 +336,88 @@ def print_model_information(model):
 
 
 # ============================================================
+# Load model weights only
+# ============================================================
+
+def load_model_weights_only(
+    model,
+    checkpoint_path,
+    device,
+):
+    """
+    Load only model weights from a training checkpoint.
+
+    Does NOT restore:
+        - optimizer state
+        - scheduler state
+        - epoch
+        - global step
+        - best metric
+    """
+
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(
+            "Weights checkpoint not found:\n"
+            f"{checkpoint_path}"
+        )
+
+    print()
+    print(
+        "[LOG] Loading ONLY model weights from:"
+    )
+    print(
+        f"      {checkpoint_path}"
+    )
+
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location=device,
+        weights_only=False,
+    )
+
+    if not isinstance(checkpoint, dict):
+        raise TypeError(
+            "Checkpoint must be a dictionary containing "
+            "'model_state_dict'."
+        )
+
+    if "model_state_dict" not in checkpoint:
+        raise KeyError(
+            f"Checkpoint does not contain 'model_state_dict':\n"
+            f"{checkpoint_path}"
+        )
+
+    model.load_state_dict(
+        checkpoint["model_state_dict"],
+        strict=True,
+    )
+
+    del checkpoint
+
+    print(
+        "[LOG] Model weights loaded successfully."
+    )
+    print(
+        "[LOG] Optimizer/scheduler/training state will start fresh."
+    )
+
+
+# ============================================================
 # Main
 # ============================================================
 
 def main():
 
     args = parse_args()
+
+    # ---------------------------------------------------------
+    # Argument validation
+    # ---------------------------------------------------------
+
+    if args.resume and args.load_weights is not None:
+        raise ValueError(
+            "--resume and --load-weights cannot be used together."
+        )
 
     # ========================================================
     # Experiment directories
@@ -406,10 +494,24 @@ def main():
 
         resume_checkpoint = None
 
-        print(
-            f"[LOG] Starting new experiment: "
-            f"{args.experiment}"
-        )
+        if args.load_weights is not None:
+
+            print(
+                f"[LOG] Starting new fine-tuning experiment: "
+                f"{args.experiment}"
+            )
+
+            print(
+                f"[LOG] Initial weights: "
+                f"{args.load_weights}"
+            )
+
+        else:
+
+            print(
+                f"[LOG] Starting new experiment: "
+                f"{args.experiment}"
+            )
 
     # ========================================================
     # Backbone selection
@@ -493,6 +595,21 @@ def main():
         path_model=path_model,
     ).to(device)
 
+    # --------------------------------------------------------
+    # Load only model weights, if requested.
+    #
+    # This MUST happen before creating the optimizer so that
+    # the optimizer starts with the current config LR.
+    # --------------------------------------------------------
+
+    if args.load_weights is not None:
+
+        load_model_weights_only(
+            model=model,
+            checkpoint_path=args.load_weights,
+            device=device,
+        )
+
     print_model_information(
         model
     )
@@ -538,6 +655,20 @@ def main():
         weight_decay=WEIGHT_DECAY,
     )
 
+    print(
+        f"[LOG] Optimizer: Adam"
+    )
+
+    print(
+        f"[LOG] Learning rate: "
+        f"{LEARNING_RATE:.2e}"
+    )
+
+    print(
+        f"[LOG] Weight decay: "
+        f"{WEIGHT_DECAY:.2e}"
+    )
+
     # ========================================================
     # Scheduler
     # ========================================================
@@ -552,6 +683,26 @@ def main():
             gamma=LR_GAMMA,
         )
 
+        print(
+            "[LOG] Scheduler: StepLR"
+        )
+
+        print(
+            f"[LOG] Step size: "
+            f"{LR_STEP_SIZE}"
+        )
+
+        print(
+            f"[LOG] Gamma: "
+            f"{LR_GAMMA}"
+        )
+
+    else:
+
+        print(
+            "[LOG] Scheduler: disabled"
+        )
+
     # ========================================================
     # Trainer
     # ========================================================
@@ -559,27 +710,36 @@ def main():
     trainer = Trainer(
         resume=args.resume,
         resume_checkpoint=resume_checkpoint,
+
         train_dataset=train_dataset,
         val_dataset=val_dataset,
+
         model=model,
         criterion=criterion,
         target_generator=target_generator,
         postprocessor=postprocessor,
         evaluator=evaluator,
+
         optimizer=optimizer,
         scheduler=scheduler,
+
         device=device,
+
         batch_size=BATCH_SIZE,
         val_ratio=VAL_RATIO,
         seed=SEED,
+
         train_num_workers=TRAIN_NUM_WORKERS,
         val_num_workers=VAL_NUM_WORKERS,
+
         log_dir=log_dir,
         checkpoint_dir=checkpoint_dir,
+
         log_scalars=LOG_SCALARS,
         log_histograms=LOG_HISTOGRAMS,
         log_gradients=LOG_GRADIENTS,
         log_hparams=LOG_HPARAMS,
+
         histogram_every_n_epochs=HISTOGRAM_EVERY_N_EPOCHS,
         gradient_every_n_steps=GRADIENT_EVERY_N_STEPS,
     )
@@ -592,6 +752,10 @@ def main():
         num_epochs=args.epochs
     )
 
+
+# ============================================================
+# Entry point
+# ============================================================
 
 if __name__ == "__main__":
     main()
