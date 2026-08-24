@@ -3,7 +3,8 @@ import pandas as pd
 from torchvision import tv_tensors
 import torch
 from torchvision.transforms import v2
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+
 
 
 
@@ -143,14 +144,28 @@ class RSNAPneumoniaDataset(DICOMDataset):
             return image, target
     
 
+    
     def get_dataloader(
         self,
         batch_size=1,
         shuffle=True,
         num_workers=0,
+        indices=None,
     ):
+        """
+        Create a DataLoader for the whole dataset or a subset.
+        """
+
+        dataset = self
+
+        if indices is not None:
+            dataset = Subset(
+                self,
+                indices,
+            )
+
         return DataLoader(
-            self,
+            dataset,
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=num_workers,

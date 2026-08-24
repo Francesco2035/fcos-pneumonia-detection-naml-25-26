@@ -1,0 +1,27 @@
+[project]
+name = "naml-25-26-pneumonia-detector"
+version = "0.1.0"
+description = "FCOS-like pneumonia detector on the RSNA Pneumonia Detection Challenge"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "numpy==2.5.1",
+    "pandas==2.3.3",
+    "pillow==12.3.0",
+    "pydicom==3.0.2",
+    "matplotlib==3.11.1",
+    "tensorboard==2.21.0",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
+]
+
+[tool.uv]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }

@@ -177,7 +177,351 @@ class TargetGenerator:
     # Generate targets for one FPN level
     # =========================================================
 
+
     def generate_targets(
+        self,
+        label_boxes,
+        feature_shape,
+        stride,
+        device=None,
+    ):
+        """
+        Generate FCOS targets for one FPN level.
+
+        The implementation is vectorized:
+            - no Python loop over feature-map locations
+            - no Python loop over GT boxes
+
+        This should be substantially faster than the original
+        location-by-location implementation.
+        """
+
+        height, width = feature_shape
+
+        # ---------------------------------------------------------
+        # Empty GT case
+        # ---------------------------------------------------------
+
+        if label_boxes.numel() == 0:
+
+            return {
+                "positive": torch.zeros(
+                    (height, width),
+                    dtype=torch.bool,
+                    device=device,
+                ),
+                "ltrb": torch.zeros(
+                    (height, width, 4),
+                    dtype=torch.float32,
+                    device=device,
+                ),
+                "centerness": torch.zeros(
+                    (height, width),
+                    dtype=torch.float32,
+                    device=device,
+                ),
+            }
+
+        # ---------------------------------------------------------
+        # Make sure boxes are on the correct device.
+        # ---------------------------------------------------------
+
+        boxes = label_boxes.to(
+            device=device,
+            dtype=torch.float32,
+        )
+
+        num_boxes = boxes.shape[0]
+
+        # ---------------------------------------------------------
+        # Create all feature-map locations.
+        #
+        # Shape:
+        #     [H * W, 2]
+        #
+        # Each row is:
+        #     [x_image, y_image]
+        # ---------------------------------------------------------
+
+        ys = torch.arange(
+            height,
+            device=device,
+            dtype=torch.float32,
+        )
+
+        xs = torch.arange(
+            width,
+            device=device,
+            dtype=torch.float32,
+        )
+
+        grid_y, grid_x = torch.meshgrid(
+            ys,
+            xs,
+            indexing="ij",
+        )
+
+        locations = torch.stack(
+            (
+                (grid_x + 0.5) * stride,
+                (grid_y + 0.5) * stride,
+            ),
+            dim=-1,
+        ).reshape(
+            -1,
+            2,
+        )
+
+        # ---------------------------------------------------------
+        # Compute LTRB distances for every:
+        #
+        #     location x GT box
+        #
+        # Shape:
+        #     [H*W, N, 4]
+        #
+        # where N = number of GT boxes.
+        # ---------------------------------------------------------
+
+        x = locations[:, 0:1]
+        y = locations[:, 1:2]
+
+        x1 = boxes[:, 0].unsqueeze(0)
+        y1 = boxes[:, 1].unsqueeze(0)
+        x2 = boxes[:, 2].unsqueeze(0)
+        y2 = boxes[:, 3].unsqueeze(0)
+
+        left = x - x1
+        top = y - y1
+        right = x2 - x
+        bottom = y2 - y
+
+        ltrb_all = torch.stack(
+            (
+                left,
+                top,
+                right,
+                bottom,
+            ),
+            dim=-1,
+        )
+
+        # ---------------------------------------------------------
+        # Check whether each location is inside each box.
+        #
+        # Shape:
+        #     [H*W, N]
+        # ---------------------------------------------------------
+
+        inside = (
+            (locations[:, 0:1] >= x1)
+            & (locations[:, 0:1] <= x2)
+            & (locations[:, 1:2] >= y1)
+            & (locations[:, 1:2] <= y2)
+        )
+
+        # ---------------------------------------------------------
+        # FCOS regression range.
+        #
+        # max(L, T, R, B)
+        # ---------------------------------------------------------
+
+        max_distance = ltrb_all.max(
+            dim=-1
+        ).values
+
+        lower, upper = self.level_config[
+            stride
+        ]["range"]
+
+        scale_mask = (
+            max_distance >= lower
+        )
+
+        if stride != 128:
+            scale_mask = (
+                scale_mask
+                & (max_distance < upper)
+            )
+
+        # ---------------------------------------------------------
+        # Final matching mask.
+        #
+        # A location can use a box only if:
+        #
+        #     1. it is inside the box
+        #     2. the box satisfies the level range
+        # ---------------------------------------------------------
+
+        matching = (
+            inside
+            & scale_mask
+        )
+
+        # ---------------------------------------------------------
+        # Select the smallest-area matching box.
+        #
+        # This reproduces the original _select_box() rule.
+        # ---------------------------------------------------------
+
+        box_area = (
+            (boxes[:, 2] - boxes[:, 0])
+            *
+            (boxes[:, 3] - boxes[:, 1])
+        )
+
+        # [1, N] -> [H*W, N]
+        area_matrix = box_area.unsqueeze(0).expand(
+            locations.shape[0],
+            num_boxes,
+        )
+
+        # Invalid matches are assigned +inf.
+        masked_area = torch.where(
+            matching,
+            area_matrix,
+            torch.full_like(
+                area_matrix,
+                float("inf"),
+            ),
+        )
+
+        # Smallest-area matching box.
+        min_area, selected_indices = (
+            masked_area.min(
+                dim=1
+            )
+        )
+
+        # A location is positive iff at least one
+        # GT box matched it.
+        positive_flat = torch.isfinite(
+            min_area
+        )
+
+        # ---------------------------------------------------------
+        # Select LTRB for the chosen box.
+        # ---------------------------------------------------------
+
+        num_locations = locations.shape[0]
+
+        location_indices = torch.arange(
+            num_locations,
+            device=device,
+        )
+
+        selected_ltrb = ltrb_all[
+            location_indices,
+            selected_indices,
+        ]
+
+        # ---------------------------------------------------------
+        # Locations without a valid GT box do not matter.
+        #
+        # Set their regression target to zero.
+        # ---------------------------------------------------------
+
+        selected_ltrb = torch.where(
+            positive_flat.unsqueeze(-1),
+            selected_ltrb,
+            torch.zeros_like(selected_ltrb),
+        )
+
+        # ---------------------------------------------------------
+        # Centerness
+        #
+        # sqrt(
+        #     min(l,r) / max(l,r)
+        #     *
+        #     min(t,b) / max(t,b)
+        # )
+        # ---------------------------------------------------------
+
+        left_target = selected_ltrb[:, 0]
+        top_target = selected_ltrb[:, 1]
+        right_target = selected_ltrb[:, 2]
+        bottom_target = selected_ltrb[:, 3]
+
+        lr_min = torch.minimum(
+            left_target,
+            right_target,
+        )
+
+        lr_max = torch.maximum(
+            left_target,
+            right_target,
+        )
+
+        tb_min = torch.minimum(
+            top_target,
+            bottom_target,
+        )
+
+        tb_max = torch.maximum(
+            top_target,
+            bottom_target,
+        )
+
+        # Avoid division by zero.
+        eps = torch.finfo(
+            selected_ltrb.dtype
+        ).eps
+
+        lr_ratio = (
+            lr_min
+            / lr_max.clamp_min(eps)
+        )
+
+        tb_ratio = (
+            tb_min
+            / tb_max.clamp_min(eps)
+        )
+
+        centerness_flat = torch.sqrt(
+            lr_ratio * tb_ratio
+        )
+
+        # Background locations -> 0.
+        centerness_flat = torch.where(
+            positive_flat,
+            centerness_flat,
+            torch.zeros_like(
+                centerness_flat
+            ),
+        )
+
+        # ---------------------------------------------------------
+        # Restore feature-map shapes.
+        # ---------------------------------------------------------
+
+        positive = positive_flat.reshape(
+            height,
+            width,
+        )
+
+        ltrb = selected_ltrb.reshape(
+            height,
+            width,
+            4,
+        )
+
+        centerness = centerness_flat.reshape(
+            height,
+            width,
+        )
+
+        # ---------------------------------------------------------
+        # Return targets.
+        # ---------------------------------------------------------
+
+        return {
+            "positive": positive,
+            "ltrb": ltrb,
+            "centerness": centerness,
+        }
+
+
+    """def generate_targets(
         self,
         label_boxes,
         feature_shape,
@@ -304,4 +648,6 @@ class TargetGenerator:
             "positive": positive,
             "ltrb": ltrb,
             "centerness": centerness,
-        }
+        }"""
+    
+        

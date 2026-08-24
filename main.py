@@ -1,107 +1,370 @@
+import argparse
 import os
+
 import torch
+import torch.multiprocessing as mp
 
-from torch import nn
-from torch.utils.tensorboard import SummaryWriter
-from collections import Counter
+mp.set_sharing_strategy("file_system")
+# PyTorch DataLoader workers use OS file descriptors to communicate
+# and share tensors between processes. With multiple workers, the
+# default per-process file-descriptor limit (often 1024) can be
+# exceeded, causing "Too many open files" errors.
+#
+# "file_system" reduces the dependency on file descriptors for
+# tensor sharing. The shell command:
+#
+#     ulimit -n 65535
+#
+# additionally raises the maximum number of open file descriptors
+# available to the training process, making multi-worker DataLoaders
+# more robust.
 
-from sklearn.metrics import confusion_matrix, classification_report
+from src.config import (
+    IMAGE_SIZE,
+    CSV_PATH,
+    TRAIN_DCM_PATH,
+    BATCH_SIZE,
+    TRAIN_NUM_WORKERS,
+    VAL_NUM_WORKERS,
+    VAL_RATIO,
+    SEED,
+    LEARNING_RATE,
+    WEIGHT_DECAY,
+    USE_SCHEDULER,
+    LR_STEP_SIZE,
+    LR_GAMMA,
+    SCORE_THRESHOLD,
+    NMS_THRESHOLD,
+    LOG_SCALARS,
+    LOG_HISTOGRAMS,
+    LOG_GRADIENTS,
+    LOG_HPARAMS,
+    HISTOGRAM_EVERY_N_EPOCHS,
+    GRADIENT_EVERY_N_STEPS,
+    NUM_EPOCHS,
+    EXPERIMENTS_DIR,
+    RESNET50_CHEST_XRAY_CHECKPOINT,
+)
 
-from src.datasets.chest_xray import ChestXRayDataModule
-from src.train import train
+from src.datasets.RSNAPneumoniaDataset import (
+    RSNAPneumoniaDataset,
+)
 
-from src.models.resnet import ResNet50
-from src.models.pretrained import get_pretrained_resnet50
+from src.datasets.transforms import (
+    get_train_transforms,
+    get_test_transforms,
+)
 
-
-# =========================================================
-# Experiment configuration
-# =========================================================
-
-MODEL_NAME = "scratch"
-
-BATCH_SIZE = 32
-EPOCHS = 20
-LEARNING_RATE = 1e-3
-
-DATA_DIR = "data/chest_xray"
-CHECKPOINT_DIR = "checkpoints"
-RUNS_DIR = "runs"
+from src.models.detector import DetectionFramework
+from src.models.target_generator import TargetGenerator
+from src.detection_loss import DetectionLoss
+from src.inference import DetectionPostProcessor
+from src.evaluate import DetectionEvaluator
+from src.train import Trainer
 
 
-# =========================================================
-# Model factory
-# =========================================================
+# ============================================================
+# Argument parsing
+# ============================================================
 
-def build_model(model_name):
+def parse_args():
 
-    if model_name == "scratch":
+    parser = argparse.ArgumentParser(
+        description="Train FCOS-like pneumonia detector."
+    )
 
-        model = ResNet50(
-            img_channels=3,
-            num_classes=2,
+    # ---------------------------------------------------------
+    # Experiment
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        required=True,
+        help="Experiment name, e.g. exp1.",
+    )
+
+    # ---------------------------------------------------------
+    # Backbone
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        choices=[
+            "imagenet",
+            "chest_xray",
+        ],
+        default="imagenet",
+        help=(
+            "Backbone initialization: "
+            "ImageNet pretrained or chest-X-ray pretrained."
+        ),
+    )
+
+    # ---------------------------------------------------------
+    # Training
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=NUM_EPOCHS,
+        help="Number of training epochs.",
+    )
+
+    # ---------------------------------------------------------
+    # Resume
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume training from the last checkpoint "
+            "of the selected experiment."
+        ),
+    )
+
+    return parser.parse_args()
+
+
+# ============================================================
+# Parameter helpers
+# ============================================================
+
+def _count_parameters(module):
+    """
+    Count all parameters in a module.
+    """
+
+    return sum(
+        parameter.numel()
+        for parameter in module.parameters()
+    )
+
+
+def _count_trainable_parameters(module):
+    """
+    Count trainable parameters in a module.
+    """
+
+    return sum(
+        parameter.numel()
+        for parameter in module.parameters()
+        if parameter.requires_grad
+    )
+
+
+def count_model_parameters(model):
+    """
+    Count parameters by model component.
+
+    The backbone is contained inside the FPN module,
+    so backbone parameters are excluded from the FPN count.
+    """
+
+    # ---------------------------------------------------------
+    # Backbone
+    # ---------------------------------------------------------
+
+    backbone = model.fpn.backbone
+
+    backbone_parameters = _count_parameters(
+        backbone
+    )
+
+    backbone_trainable = _count_trainable_parameters(
+        backbone
+    )
+
+    # ---------------------------------------------------------
+    # FPN excluding backbone
+    # ---------------------------------------------------------
+
+    fpn_parameters = 0
+    fpn_trainable = 0
+
+    for name, parameter in model.fpn.named_parameters():
+
+        if name.startswith("backbone."):
+            continue
+
+        fpn_parameters += parameter.numel()
+
+        if parameter.requires_grad:
+            fpn_trainable += parameter.numel()
+
+    # ---------------------------------------------------------
+    # Detection heads
+    # ---------------------------------------------------------
+
+    heads = {}
+    heads_trainable = {}
+
+    head_modules = {
+        "P3": model.head3,
+        "P4": model.head4,
+        "P5": model.head5,
+        "P6": model.head6,
+        "P7": model.head7,
+    }
+
+    for level, head in head_modules.items():
+
+        heads[level] = _count_parameters(
+            head
         )
 
-    elif model_name == "pretrained":
-
-        model = get_pretrained_resnet50(
-            num_classes=2,
-        )
-
-    else:
-
-        raise ValueError(
-            f"Unknown model: {model_name}"
-        )
-
-    return model
-
-
-# =========================================================
-# Evaluation
-# =========================================================
-
-def evaluate_predictions(
-    model,
-    loader,
-    device,
-):
-
-    model.eval()
-
-    all_predictions = []
-    all_labels = []
-
-    with torch.no_grad():
-
-        for images, labels in loader:
-
-            images = images.to(device)
-
-            outputs = model(images)
-
-            predictions = outputs.argmax(dim=1)
-
-            all_predictions.extend(
-                predictions.cpu().tolist()
+        heads_trainable[level] = (
+            _count_trainable_parameters(
+                head
             )
+        )
 
-            all_labels.extend(
-                labels.tolist()
-            )
+    # ---------------------------------------------------------
+    # Total model
+    # ---------------------------------------------------------
 
-    return all_labels, all_predictions
+    total = sum(
+        parameter.numel()
+        for parameter in model.parameters()
+    )
+
+    trainable = sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
+
+    return {
+        "total": total,
+        "trainable": trainable,
+
+        "backbone": backbone_parameters,
+        "backbone_trainable": backbone_trainable,
+
+        "fpn": fpn_parameters,
+        "fpn_trainable": fpn_trainable,
+
+        "heads": heads,
+        "heads_trainable": heads_trainable,
+    }
 
 
-# =========================================================
+# ============================================================
+# Print model information
+# ============================================================
+
+def print_model_information(model):
+
+    counts = count_model_parameters(
+        model
+    )
+
+    print()
+    print("=" * 60)
+    print("Model parameters")
+    print("=" * 60)
+
+    print(
+        f"Backbone: "
+        f"{counts['backbone']:,} "
+        f"({counts['backbone'] / 1e6:.2f} M) "
+        f"trainable="
+        f"{counts['backbone_trainable']:,}"
+    )
+
+    print(
+        f"FPN:      "
+        f"{counts['fpn']:,} "
+        f"({counts['fpn'] / 1e6:.2f} M) "
+        f"trainable="
+        f"{counts['fpn_trainable']:,}"
+    )
+
+    print()
+
+    print("Detection heads:")
+
+    for level in (
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+    ):
+
+        parameters = counts["heads"][level]
+        trainable = counts["heads_trainable"][level]
+
+        print(
+            f"  {level}: "
+            f"{parameters:,} "
+            f"({parameters / 1e6:.2f} M) "
+            f"trainable={trainable:,}"
+        )
+
+    print("-" * 60)
+
+    print(
+        f"Total:    "
+        f"{counts['total']:,} "
+        f"({counts['total'] / 1e6:.2f} M)"
+    )
+
+    print(
+        f"Trainable: "
+        f"{counts['trainable']:,} "
+        f"({counts['trainable'] / 1e6:.2f} M)"
+    )
+
+    print("=" * 60)
+    print()
+
+
+# ============================================================
 # Main
-# =========================================================
+# ============================================================
 
 def main():
 
-    # =====================================================
+    args = parse_args()
+
+    # ========================================================
+    # Experiment directories
+    # ========================================================
+
+    experiment_dir = os.path.join(
+        EXPERIMENTS_DIR,
+        args.experiment,
+    )
+
+    checkpoint_dir = experiment_dir
+
+    log_dir = os.path.join(
+        experiment_dir,
+        "tensorboard",
+    )
+
+    os.makedirs(
+        experiment_dir,
+        exist_ok=True,
+    )
+
+    os.makedirs(
+        log_dir,
+        exist_ok=True,
+    )
+
+    last_checkpoint = os.path.join(
+        checkpoint_dir,
+        "last.pt",
+    )
+
+    # ========================================================
     # Device
-    # =====================================================
+    # ========================================================
 
     device = torch.device(
         "cuda"
@@ -109,288 +372,225 @@ def main():
         else "cpu"
     )
 
-    print(f"Device: {device}")
+    print(
+        f"[LOG] Device: {device}"
+    )
 
-    if torch.cuda.is_available():
+    # ========================================================
+    # Resume
+    # ========================================================
+
+    if args.resume:
+
+        if not os.path.isfile(
+            last_checkpoint
+        ):
+            raise FileNotFoundError(
+                "Resume requested but checkpoint "
+                f"does not exist:\n{last_checkpoint}"
+            )
+
+        resume_checkpoint = last_checkpoint
 
         print(
-            f"GPU: "
-            f"{torch.cuda.get_device_name(0)}"
+            f"[LOG] Resuming experiment: "
+            f"{args.experiment}"
         )
 
-    # =====================================================
+        print(
+            f"[LOG] Resume checkpoint: "
+            f"{resume_checkpoint}"
+        )
+
+    else:
+
+        resume_checkpoint = None
+
+        print(
+            f"[LOG] Starting new experiment: "
+            f"{args.experiment}"
+        )
+
+    # ========================================================
+    # Backbone selection
+    # ========================================================
+
+    if args.backbone == "imagenet":
+
+        path_model = None
+
+        print(
+            "[LOG] Backbone initialization: "
+            "ImageNet pretrained ResNet-50"
+        )
+
+    elif args.backbone == "chest_xray":
+
+        path_model = (
+            RESNET50_CHEST_XRAY_CHECKPOINT
+        )
+
+        if not os.path.isfile(
+            path_model
+        ):
+            raise FileNotFoundError(
+                "Chest-X-ray pretrained backbone "
+                f"not found:\n{path_model}"
+            )
+
+        print(
+            "[LOG] Backbone initialization: "
+            "Chest-X-ray pretrained ResNet-50"
+        )
+
+        print(
+            f"[LOG] Backbone checkpoint: "
+            f"{path_model}"
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unsupported backbone: {args.backbone}"
+        )
+
+    # ========================================================
     # Dataset
-    # =====================================================
+    # ========================================================
 
-    data = ChestXRayDataModule(
-        data_dir=DATA_DIR,
-        batch_size=BATCH_SIZE,
+    print()
+    print("[LOG] Creating datasets...")
+
+    train_dataset = RSNAPneumoniaDataset(
+        dcm_path=TRAIN_DCM_PATH,
+        csv_path=CSV_PATH,
+        transform=get_train_transforms(
+            IMAGE_SIZE
+        ),
     )
 
-    (
-        train_loader,
-        val_loader,
-        test_loader,
-    ) = data.get_dataloaders()
-
-    print("\n=========================")
-    print("DATASET")
-    print("=========================")
-
-    print(
-        f"Train samples: "
-        f"{len(train_loader.dataset)}"
-    )
-
-    print(
-        f"Validation samples: "
-        f"{len(val_loader.dataset)}"
-    )
-
-    print(
-        f"Test samples: "
-        f"{len(test_loader.dataset)}"
-    )
-
-    print(
-        "\nTrain classes:",
-        Counter(
-            train_loader.dataset.targets
+    val_dataset = RSNAPneumoniaDataset(
+        dcm_path=TRAIN_DCM_PATH,
+        csv_path=CSV_PATH,
+        transform=get_test_transforms(
+            IMAGE_SIZE
         ),
     )
 
     print(
-        "Validation classes:",
-        Counter(
-            val_loader.dataset.targets
-        ),
+        f"[LOG] Dataset size: "
+        f"{len(train_dataset)}"
     )
 
-    print(
-        "Test classes:",
-        Counter(
-            test_loader.dataset.targets
-        ),
-    )
-
-    print(
-        "\nClass mapping:",
-        train_loader.dataset.class_to_idx,
-    )
-
-    # =====================================================
+    # ========================================================
     # Model
-    # =====================================================
+    # ========================================================
 
-    model = build_model(MODEL_NAME)
+    print()
+    print("[LOG] Creating model...")
 
-    model = model.to(device)
+    model = DetectionFramework(
+        path_model=path_model,
+    ).to(device)
 
-    num_parameters = sum(
-        p.numel()
-        for p in model.parameters()
+    print_model_information(
+        model
     )
 
-    trainable_parameters = sum(
-        p.numel()
-        for p in model.parameters()
-        if p.requires_grad
-    )
-
-    print("\n=========================")
-    print("MODEL")
-    print("=========================")
-
-    print(
-        f"Model: {MODEL_NAME}"
-    )
-
-    print(
-        f"Parameters: "
-        f"{num_parameters:,}"
-    )
-
-    print(
-        f"Trainable parameters: "
-        f"{trainable_parameters:,}"
-    )
-
-    # =====================================================
+    # ========================================================
     # Loss
-    # =====================================================
+    # ========================================================
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = DetectionLoss()
 
-    # =====================================================
+    # ========================================================
+    # Target generator
+    # ========================================================
+
+    target_generator = TargetGenerator()
+
+    # ========================================================
+    # Postprocessor
+    # ========================================================
+
+    postprocessor = DetectionPostProcessor(
+        score_threshold=SCORE_THRESHOLD,
+        nms_threshold=NMS_THRESHOLD,
+    )
+
+    # ========================================================
+    # Evaluator
+    # ========================================================
+
+    evaluator = DetectionEvaluator(
+        model=model,
+        postprocessor=postprocessor,
+        device=device,
+    )
+
+    # ========================================================
     # Optimizer
-    # =====================================================
+    # ========================================================
 
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
     )
 
-    # =====================================================
-    # Experiment
-    # =====================================================
+    # ========================================================
+    # Scheduler
+    # ========================================================
 
-    model_label = (
-        f"resnet50_{MODEL_NAME}_chest_xray"
-    )
+    scheduler = None
 
-    checkpoint_dir = CHECKPOINT_DIR
+    if USE_SCHEDULER:
 
-    os.makedirs(
-        checkpoint_dir,
-        exist_ok=True,
-    )
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=LR_STEP_SIZE,
+            gamma=LR_GAMMA,
+        )
 
-    writer = SummaryWriter(
-        log_dir=f"{RUNS_DIR}/{model_label}"
-    )
+    # ========================================================
+    # Trainer
+    # ========================================================
 
-    print("\n=========================")
-    print("EXPERIMENT")
-    print("=========================")
-
-    print(
-        f"Experiment: {model_label}"
-    )
-
-    print(
-        f"Learning rate: "
-        f"{LEARNING_RATE}"
-    )
-
-    print(
-        f"Batch size: "
-        f"{BATCH_SIZE}"
-    )
-
-    print(
-        f"Epochs: "
-        f"{EPOCHS}"
-    )
-
-    # =====================================================
-    # Training
-    # =====================================================
-
-    print("\n=========================")
-    print("TRAINING")
-    print("=========================")
-
-    train(
+    trainer = Trainer(
+        resume=args.resume,
+        resume_checkpoint=resume_checkpoint,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
         criterion=criterion,
+        target_generator=target_generator,
+        postprocessor=postprocessor,
+        evaluator=evaluator,
         optimizer=optimizer,
+        scheduler=scheduler,
         device=device,
-        epochs=EPOCHS,
-        writer=writer,
-        model_label=model_label,
+        batch_size=BATCH_SIZE,
+        val_ratio=VAL_RATIO,
+        seed=SEED,
+        train_num_workers=TRAIN_NUM_WORKERS,
+        val_num_workers=VAL_NUM_WORKERS,
+        log_dir=log_dir,
         checkpoint_dir=checkpoint_dir,
+        log_scalars=LOG_SCALARS,
+        log_histograms=LOG_HISTOGRAMS,
+        log_gradients=LOG_GRADIENTS,
+        log_hparams=LOG_HPARAMS,
+        histogram_every_n_epochs=HISTOGRAM_EVERY_N_EPOCHS,
+        gradient_every_n_steps=GRADIENT_EVERY_N_STEPS,
     )
 
-    # =====================================================
-    # Load BEST model
-    # =====================================================
+    # ========================================================
+    # Training
+    # ========================================================
 
-    best_model_path = (
-        f"{checkpoint_dir}/"
-        f"{model_label}_best.pth"
+    trainer.train(
+        num_epochs=args.epochs
     )
-
-    print("\n=========================")
-    print("BEST MODEL")
-    print("=========================")
-
-    print(
-        f"Loading: "
-        f"{best_model_path}"
-    )
-
-    checkpoint = torch.load(
-        best_model_path,
-        map_location=device,
-    )
-
-    model.load_state_dict(
-        checkpoint["model_state_dict"]
-    )
-
-    best_epoch = (
-        checkpoint["epoch"] + 1
-    )
-
-    best_val_loss = (
-        checkpoint["val_loss"]
-    )
-
-    print(
-        f"Best epoch: "
-        f"{best_epoch}"
-    )
-
-    print(
-        f"Best validation loss: "
-        f"{best_val_loss:.4f}"
-    )
-
-    # =====================================================
-    # Final TEST evaluation
-    # =====================================================
-
-    labels, predictions = (
-        evaluate_predictions(
-            model=model,
-            loader=test_loader,
-            device=device,
-        )
-    )
-
-    print("\n=========================")
-    print("TEST RESULTS")
-    print("=========================")
-
-    cm = confusion_matrix(
-        labels,
-        predictions,
-    )
-
-    print("\nConfusion Matrix:")
-
-    print(cm)
-
-    print(
-        "\nClassification Report:"
-    )
-
-    print(
-        classification_report(
-            labels,
-            predictions,
-            target_names=[
-                "NORMAL",
-                "PNEUMONIA",
-            ],
-            digits=4,
-        )
-    )
-
-
-    # =====================================================
-    # Cleanup
-    # =====================================================
-
-    writer.close()
-
-
-# =========================================================
-# Entry point
-# =========================================================
-
 
 
 if __name__ == "__main__":

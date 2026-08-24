@@ -13,11 +13,11 @@ class DetectionHead(nn.Module):
     ):
         super().__init__()
 
-        # -----------------------------------------------------
-        # Shared feature convolution
-        # -----------------------------------------------------
+        # =====================================================
+        # Classification tower
+        # =====================================================
 
-        self.feature_conv = nn.Conv2d(
+        self.classification_feature_conv = nn.Conv2d(
             in_channels=in_channels,
             out_channels=hidden_channels,
             kernel_size=3,
@@ -25,12 +25,39 @@ class DetectionHead(nn.Module):
             padding=1,
         )
 
-        # -----------------------------------------------------
-        # Classification branch
-        #
-        # Binary classification:
-        # 1 logit per location
-        # -----------------------------------------------------
+        self.classification_feature_norm = nn.GroupNorm(
+            num_groups=32,
+            num_channels=hidden_channels,
+        )
+
+        self.classification_feature_activation = nn.ReLU(
+            inplace=True
+        )
+
+        # =====================================================
+        # Regression / centerness tower
+        # =====================================================
+
+        self.regression_feature_conv = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=hidden_channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+        )
+
+        self.regression_feature_norm = nn.GroupNorm(
+            num_groups=32,
+            num_channels=hidden_channels,
+        )
+
+        self.regression_feature_activation = nn.ReLU(
+            inplace=True
+        )
+
+        # =====================================================
+        # Final prediction layers
+        # =====================================================
 
         self.classification_conv = nn.Conv2d(
             in_channels=hidden_channels,
@@ -38,24 +65,11 @@ class DetectionHead(nn.Module):
             kernel_size=1,
         )
 
-        # -----------------------------------------------------
-        # Regression branch
-        #
-        # 4 values per location:
-        # left, top, right, bottom
-        # -----------------------------------------------------
-
         self.regression_conv = nn.Conv2d(
             in_channels=hidden_channels,
             out_channels=regression_channels,
             kernel_size=1,
         )
-
-        # -----------------------------------------------------
-        # Center-ness branch
-        #
-        # 1 value per location
-        # -----------------------------------------------------
 
         self.centerness_conv = nn.Conv2d(
             in_channels=hidden_channels,
@@ -65,14 +79,70 @@ class DetectionHead(nn.Module):
 
     def forward(self, x):
 
-        # Shared features
-        features = self.feature_conv(x)
+        # =====================================================
+        # Classification branch
+        # =====================================================
 
-        # Three prediction branches
-        classification = self.classification_conv(features)
+        classification_features = (
+            self.classification_feature_conv(x)
+        )
 
-        regression = self.regression_conv(features)
+        classification_features = (
+            self.classification_feature_norm(
+                classification_features
+            )
+        )
 
-        centerness = self.centerness_conv(features)
+        classification_features = (
+            self.classification_feature_activation(
+                classification_features
+            )
+        )
 
-        return classification, regression, centerness
+        classification = (
+            self.classification_conv(
+                classification_features
+            )
+        )
+
+        # =====================================================
+        # Regression / centerness branch
+        # =====================================================
+
+        regression_features = (
+            self.regression_feature_conv(x)
+        )
+
+        regression_features = (
+            self.regression_feature_norm(
+                regression_features
+            )
+        )
+
+        regression_features = (
+            self.regression_feature_activation(
+                regression_features
+            )
+        )
+
+        regression = (
+            self.regression_conv(
+                regression_features
+            )
+        )
+
+        centerness = (
+            self.centerness_conv(
+                regression_features
+            )
+        )
+
+        # =====================================================
+        # Return predictions
+        # =====================================================
+
+        return (
+            classification,
+            regression,
+            centerness,
+        )
