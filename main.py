@@ -5,19 +5,6 @@ import torch
 import torch.multiprocessing as mp
 
 mp.set_sharing_strategy("file_system")
-# PyTorch DataLoader workers use OS file descriptors to communicate
-# and share tensors between processes. With multiple workers, the
-# default per-process file-descriptor limit (often 1024) can be exceeded,
-# causing "Too many open files" errors.
-#
-# "file_system" reduces the dependency on file descriptors for tensor sharing.
-# The shell command:
-#
-#     ulimit -n 65535
-#
-# additionally raises the maximum number of open file descriptors
-# available to the training process, making multi-worker DataLoaders
-# more robust.
 
 from src.config import (
     IMAGE_SIZE,
@@ -46,9 +33,7 @@ from src.config import (
     RESNET50_CHEST_XRAY_CHECKPOINT,
 )
 
-from src.datasets.RSNAPneumoniaDataset import (
-    RSNAPneumoniaDataset,
-)
+from src.datasets.RSNAPneumoniaDataset import RSNAPneumoniaDataset
 
 from src.datasets.transforms import (
     get_train_transforms,
@@ -109,7 +94,21 @@ def parse_args():
         "--epochs",
         type=int,
         default=NUM_EPOCHS,
-        help="Number of training epochs.",
+        help=f"Number of training epochs. Default: {NUM_EPOCHS}",
+    )
+
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=LEARNING_RATE,
+        help=f"Learning rate. Default: {LEARNING_RATE}",
+    )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help=f"Training/validation batch size. Default: {BATCH_SIZE}",
     )
 
     # ---------------------------------------------------------
@@ -148,9 +147,6 @@ def parse_args():
 # ============================================================
 
 def _count_parameters(module):
-    """
-    Count all parameters in a module.
-    """
     return sum(
         parameter.numel()
         for parameter in module.parameters()
@@ -158,9 +154,6 @@ def _count_parameters(module):
 
 
 def _count_trainable_parameters(module):
-    """
-    Count trainable parameters in a module.
-    """
     return sum(
         parameter.numel()
         for parameter in module.parameters()
@@ -169,17 +162,6 @@ def _count_trainable_parameters(module):
 
 
 def count_model_parameters(model):
-    """
-    Count parameters by model component.
-
-    The backbone is contained inside the FPN module,
-    so backbone parameters are excluded from the FPN count.
-    """
-
-    # ---------------------------------------------------------
-    # Backbone
-    # ---------------------------------------------------------
-
     backbone = model.fpn.backbone
 
     backbone_parameters = _count_parameters(
@@ -189,10 +171,6 @@ def count_model_parameters(model):
     backbone_trainable = _count_trainable_parameters(
         backbone
     )
-
-    # ---------------------------------------------------------
-    # FPN excluding backbone
-    # ---------------------------------------------------------
 
     fpn_parameters = 0
     fpn_trainable = 0
@@ -206,10 +184,6 @@ def count_model_parameters(model):
 
         if parameter.requires_grad:
             fpn_trainable += parameter.numel()
-
-    # ---------------------------------------------------------
-    # Detection heads
-    # ---------------------------------------------------------
 
     heads = {}
     heads_trainable = {}
@@ -234,10 +208,6 @@ def count_model_parameters(model):
             )
         )
 
-    # ---------------------------------------------------------
-    # Total model
-    # ---------------------------------------------------------
-
     total = sum(
         parameter.numel()
         for parameter in model.parameters()
@@ -252,13 +222,10 @@ def count_model_parameters(model):
     return {
         "total": total,
         "trainable": trainable,
-
         "backbone": backbone_parameters,
         "backbone_trainable": backbone_trainable,
-
         "fpn": fpn_parameters,
         "fpn_trainable": fpn_trainable,
-
         "heads": heads,
         "heads_trainable": heads_trainable,
     }
@@ -296,7 +263,6 @@ def print_model_information(model):
     )
 
     print()
-
     print("Detection heads:")
 
     for level in (
@@ -345,11 +311,11 @@ def load_model_weights_only(
     device,
 ):
     """
-    Load only model weights from a training checkpoint.
+    Load only model weights.
 
     Does NOT restore:
-        - optimizer state
-        - scheduler state
+        - optimizer
+        - scheduler
         - epoch
         - global step
         - best metric
@@ -377,14 +343,13 @@ def load_model_weights_only(
 
     if not isinstance(checkpoint, dict):
         raise TypeError(
-            "Checkpoint must be a dictionary containing "
-            "'model_state_dict'."
+            "Checkpoint must be a dictionary."
         )
 
     if "model_state_dict" not in checkpoint:
         raise KeyError(
-            f"Checkpoint does not contain 'model_state_dict':\n"
-            f"{checkpoint_path}"
+            f"Checkpoint does not contain "
+            f"'model_state_dict':\n{checkpoint_path}"
         )
 
     model.load_state_dict(
@@ -398,7 +363,8 @@ def load_model_weights_only(
         "[LOG] Model weights loaded successfully."
     )
     print(
-        "[LOG] Optimizer/scheduler/training state will start fresh."
+        "[LOG] Optimizer/scheduler/training state "
+        "will start fresh."
     )
 
 
@@ -416,7 +382,24 @@ def main():
 
     if args.resume and args.load_weights is not None:
         raise ValueError(
-            "--resume and --load-weights cannot be used together."
+            "--resume and --load-weights "
+            "cannot be used together."
+        )
+
+    if args.epochs < 1:
+        raise ValueError(
+            f"--epochs must be >= 1, got {args.epochs}"
+        )
+
+    if args.lr <= 0:
+        raise ValueError(
+            f"--lr must be > 0, got {args.lr}"
+        )
+
+    if args.batch_size < 1:
+        raise ValueError(
+            f"--batch-size must be >= 1, "
+            f"got {args.batch_size}"
         )
 
     # ========================================================
@@ -460,9 +443,58 @@ def main():
         else "cpu"
     )
 
+    print()
     print(
         f"[LOG] Device: {device}"
     )
+
+    # ========================================================
+    # Effective configuration
+    # ========================================================
+
+    print()
+    print("=" * 60)
+    print("Training configuration")
+    print("=" * 60)
+
+    print(
+        f"Experiment:      {args.experiment}"
+    )
+
+    print(
+        f"Backbone:        {args.backbone}"
+    )
+
+    print(
+        f"Epochs:          {args.epochs}"
+    )
+
+    print(
+        f"Batch size:      {args.batch_size}"
+    )
+
+    print(
+        f"Learning rate:   {args.lr:.2e}"
+    )
+
+    print(
+        f"Weight decay:    {WEIGHT_DECAY:.2e}"
+    )
+
+    print(
+        f"Scheduler:       "
+        f"{'StepLR' if USE_SCHEDULER else 'disabled'}"
+    )
+
+    if USE_SCHEDULER:
+        print(
+            f"LR step size:   {LR_STEP_SIZE}"
+        )
+        print(
+            f"LR gamma:       {LR_GAMMA}"
+        )
+
+    print("=" * 60)
 
     # ========================================================
     # Resume
@@ -480,6 +512,7 @@ def main():
 
         resume_checkpoint = last_checkpoint
 
+        print()
         print(
             f"[LOG] Resuming experiment: "
             f"{args.experiment}"
@@ -496,8 +529,9 @@ def main():
 
         if args.load_weights is not None:
 
+            print()
             print(
-                f"[LOG] Starting new fine-tuning experiment: "
+                f"[LOG] Starting fine-tuning experiment: "
                 f"{args.experiment}"
             )
 
@@ -508,6 +542,7 @@ def main():
 
         else:
 
+            print()
             print(
                 f"[LOG] Starting new experiment: "
                 f"{args.experiment}"
@@ -551,7 +586,6 @@ def main():
         )
 
     else:
-
         raise ValueError(
             f"Unsupported backbone: {args.backbone}"
         )
@@ -596,10 +630,7 @@ def main():
     ).to(device)
 
     # --------------------------------------------------------
-    # Load only model weights, if requested.
-    #
-    # This MUST happen before creating the optimizer so that
-    # the optimizer starts with the current config LR.
+    # Load only model weights
     # --------------------------------------------------------
 
     if args.load_weights is not None:
@@ -651,22 +682,8 @@ def main():
 
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=LEARNING_RATE,
+        lr=args.lr,
         weight_decay=WEIGHT_DECAY,
-    )
-
-    print(
-        f"[LOG] Optimizer: Adam"
-    )
-
-    print(
-        f"[LOG] Learning rate: "
-        f"{LEARNING_RATE:.2e}"
-    )
-
-    print(
-        f"[LOG] Weight decay: "
-        f"{WEIGHT_DECAY:.2e}"
     )
 
     # ========================================================
@@ -681,26 +698,6 @@ def main():
             optimizer,
             step_size=LR_STEP_SIZE,
             gamma=LR_GAMMA,
-        )
-
-        print(
-            "[LOG] Scheduler: StepLR"
-        )
-
-        print(
-            f"[LOG] Step size: "
-            f"{LR_STEP_SIZE}"
-        )
-
-        print(
-            f"[LOG] Gamma: "
-            f"{LR_GAMMA}"
-        )
-
-    else:
-
-        print(
-            "[LOG] Scheduler: disabled"
         )
 
     # ========================================================
@@ -725,7 +722,7 @@ def main():
 
         device=device,
 
-        batch_size=BATCH_SIZE,
+        batch_size=args.batch_size,
         val_ratio=VAL_RATIO,
         seed=SEED,
 
