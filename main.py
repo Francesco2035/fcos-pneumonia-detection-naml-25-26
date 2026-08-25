@@ -36,7 +36,7 @@ from src.config import (
 )
 
 from src.datasets.RSNAPneumoniaDataset import (
-    RSNAPneumoniaDataset
+    RSNAPneumoniaDataset,
 )
 
 from src.datasets.transforms import (
@@ -45,23 +45,27 @@ from src.datasets.transforms import (
 )
 
 from src.models.detector import (
-    DetectionFramework
+    DetectionFramework,
 )
 
 from src.detection_loss import (
-    DetectionLoss
+    DetectionLoss,
+)
+
+from src.models.target_generator import (
+    TargetGenerator,
 )
 
 from src.inference import (
-    DetectionPostProcessor
+    DetectionPostProcessor,
 )
 
 from src.evaluate import (
-    DetectionEvaluator
+    DetectionEvaluator,
 )
 
 from src.train import (
-    Trainer
+    Trainer,
 )
 
 
@@ -194,9 +198,9 @@ def parse_args():
         type=str,
         default=None,
         help=(
-            "Load only ResNet backbone weights from "
-            "a classification checkpoint. "
-            "The classifier head is ignored."
+            "Load a ResNet classification checkpoint "
+            "as the detector backbone. The checkpoint "
+            "is passed directly to the detector Backbone."
         ),
     )
 
@@ -208,7 +212,7 @@ def parse_args():
 # ============================================================
 
 def _count_parameters(
-    module
+    module,
 ):
     return sum(
         parameter.numel()
@@ -217,7 +221,7 @@ def _count_parameters(
 
 
 def _count_trainable_parameters(
-    module
+    module,
 ):
     return sum(
         parameter.numel()
@@ -227,7 +231,7 @@ def _count_trainable_parameters(
 
 
 def count_model_parameters(
-    model
+    model,
 ):
 
     backbone = model.fpn.backbone
@@ -249,7 +253,7 @@ def count_model_parameters(
 
     for (
         name,
-        parameter
+        parameter,
     ) in model.fpn.named_parameters():
 
         if name.startswith(
@@ -279,7 +283,7 @@ def count_model_parameters(
 
     for (
         level,
-        head
+        head,
     ) in head_modules.items():
 
         heads[level] = (
@@ -322,7 +326,7 @@ def count_model_parameters(
 # ============================================================
 
 def print_model_information(
-    model
+    model,
 ):
 
     counts = count_model_parameters(
@@ -410,7 +414,7 @@ def print_model_information(
 
 
 # ============================================================
-# Load detector weights only
+# Load complete detector weights only
 # ============================================================
 
 def load_model_weights_only(
@@ -419,7 +423,7 @@ def load_model_weights_only(
     device,
 ):
     """
-    Load only model weights.
+    Load only model weights from a complete detector checkpoint.
 
     Does NOT restore:
         - optimizer
@@ -439,7 +443,7 @@ def load_model_weights_only(
 
     print()
     print(
-        "[LOG] Loading ONLY model weights from:"
+        "[LOG] Loading ONLY detector model weights from:"
     )
 
     print(
@@ -480,197 +484,13 @@ def load_model_weights_only(
     del checkpoint
 
     print(
-        "[LOG] Model weights loaded successfully."
+        "[LOG] Detector model weights "
+        "loaded successfully."
     )
 
     print(
         "[LOG] Optimizer/scheduler/training state "
         "will start fresh."
-    )
-
-
-# ============================================================
-# Load ResNet backbone weights only
-# ============================================================
-
-def load_backbone_weights_only(
-    model,
-    checkpoint_path,
-    device,
-):
-    """
-    Load only ResNet backbone weights from the
-    classification checkpoint.
-
-    The classification head (fc.*) is intentionally ignored.
-
-    Compatible keys are matched by name and shape after
-    removing common prefixes such as:
-        module.
-        backbone.
-        fpn.backbone.
-    """
-
-    if not os.path.isfile(
-        checkpoint_path
-    ):
-        raise FileNotFoundError(
-            "Backbone checkpoint not found:\n"
-            f"{checkpoint_path}"
-        )
-
-    print()
-    print(
-        "[LOG] Loading ONLY ResNet backbone "
-        "weights from:"
-    )
-
-    print(
-        f"      {checkpoint_path}"
-    )
-
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location=device,
-        weights_only=False,
-    )
-
-    if not isinstance(
-        checkpoint,
-        dict,
-    ):
-        raise TypeError(
-            "Backbone checkpoint must be a dictionary."
-        )
-
-    if (
-        "model_state_dict"
-        in checkpoint
-    ):
-
-        state_dict = (
-            checkpoint[
-                "model_state_dict"
-            ]
-        )
-
-    elif (
-        "state_dict"
-        in checkpoint
-    ):
-
-        state_dict = (
-            checkpoint[
-                "state_dict"
-            ]
-        )
-
-    else:
-
-        state_dict = checkpoint
-
-    backbone = (
-        model.fpn.backbone
-    )
-
-    current_state = (
-        backbone.state_dict()
-    )
-
-    compatible = {}
-    skipped = []
-
-    for (
-        key,
-        value
-    ) in state_dict.items():
-
-        candidate_keys = [
-            key,
-            key.removeprefix(
-                "module."
-            ),
-            key.removeprefix(
-                "backbone."
-            ),
-            key.removeprefix(
-                "fpn.backbone."
-            ),
-        ]
-
-        matched_key = None
-
-        for candidate in candidate_keys:
-
-            if (
-                candidate
-                in current_state
-                and
-                current_state[
-                    candidate
-                ].shape
-                ==
-                value.shape
-            ):
-
-                matched_key = candidate
-                break
-
-        if matched_key is not None:
-
-            compatible[
-                matched_key
-            ] = value
-
-        else:
-
-            skipped.append(
-                key
-            )
-
-    if not compatible:
-        raise RuntimeError(
-            "No compatible ResNet backbone "
-            "weights were found in checkpoint:\n"
-            f"{checkpoint_path}"
-        )
-
-    missing_before_load = [
-        key
-        for key in current_state
-        if key not in compatible
-    ]
-
-    backbone.load_state_dict(
-        compatible,
-        strict=False,
-    )
-
-    del checkpoint
-
-    print(
-        "[LOG] ResNet backbone weights "
-        "loaded successfully."
-    )
-
-    print(
-        f"[LOG] Compatible parameters: "
-        f"{len(compatible)}"
-    )
-
-    print(
-        f"[LOG] Skipped parameters: "
-        f"{len(skipped)}"
-    )
-
-    print(
-        f"[LOG] Missing backbone parameters: "
-        f"{len(missing_before_load)}"
-    )
-
-    print(
-        "[LOG] Classification head "
-        "(fc.*) is intentionally ignored."
     )
 
 
@@ -803,7 +623,7 @@ def main():
     )
 
     print(
-        f"Backbone:            "
+        f"Backbone mode:       "
         f"{args.backbone}"
     )
 
@@ -852,14 +672,14 @@ def main():
     if args.load_backbone_weights:
 
         print(
-            f"Backbone weights:    "
+            f"Backbone checkpoint: "
             f"{args.load_backbone_weights}"
         )
 
     elif args.load_weights:
 
         print(
-            f"Detector weights:    "
+            f"Detector checkpoint: "
             f"{args.load_weights}"
         )
 
@@ -909,7 +729,7 @@ def main():
             print()
             print(
                 "[LOG] Starting fine-tuning "
-                "from ResNet backbone weights."
+                "from custom ResNet backbone."
             )
 
             print(
@@ -925,8 +745,7 @@ def main():
             print()
             print(
                 "[LOG] Starting fine-tuning "
-                "experiment: "
-                f"{args.experiment}"
+                f"experiment: {args.experiment}"
             )
 
             print(
@@ -946,28 +765,65 @@ def main():
     # Backbone selection
     # ========================================================
 
-    # Explicit ResNet checkpoint overrides the normal
-    # backbone initialization.
     if (
         args.load_backbone_weights
         is not None
     ):
 
-        path_model = None
+        # IMPORTANT:
+        # The custom ResNet checkpoint is passed directly
+        # to DetectionFramework -> FPN -> Backbone.
+        #
+        # Backbone.py already handles:
+        #
+        #   path_model is None
+        #       -> ImageNet
+        #
+        #   path_model is not None
+        #       -> custom ResNet50 + checkpoint
+        #
+        path_model = (
+            args.load_backbone_weights
+        )
+
+        if not os.path.isfile(
+            path_model
+        ):
+            raise FileNotFoundError(
+                "Backbone checkpoint not found:\n"
+                f"{path_model}"
+            )
+
+        print()
+        print(
+            "[LOG] Backbone initialization:"
+        )
 
         print(
-            "[LOG] Detector backbone will be "
-            "initialized from the explicit "
-            "classification checkpoint."
+            "      Custom Chest-Xray "
+            "ResNet-50"
+        )
+
+        print(
+            "[LOG] Backbone checkpoint:"
+        )
+
+        print(
+            f"      {path_model}"
         )
 
     elif args.backbone == "imagenet":
 
         path_model = None
 
+        print()
         print(
-            "[LOG] Backbone initialization: "
-            "ImageNet pretrained ResNet-50"
+            "[LOG] Backbone initialization:"
+        )
+
+        print(
+            "      ImageNet pretrained "
+            "ResNet-50"
         )
 
     elif args.backbone == "chest_xray":
@@ -980,19 +836,27 @@ def main():
             path_model
         ):
             raise FileNotFoundError(
-                "Chest-X-ray pretrained backbone "
+                "Chest-Xray pretrained backbone "
                 "not found:\n"
                 f"{path_model}"
             )
 
+        print()
         print(
-            "[LOG] Backbone initialization: "
-            "Chest-Xray pretrained ResNet-50"
+            "[LOG] Backbone initialization:"
         )
 
         print(
-            f"[LOG] Backbone checkpoint: "
-            f"{path_model}"
+            "      Chest-Xray pretrained "
+            "ResNet-50"
+        )
+
+        print(
+            "[LOG] Backbone checkpoint:"
+        )
+
+        print(
+            f"      {path_model}"
         )
 
     else:
@@ -1056,7 +920,10 @@ def main():
     # Load complete detector weights only
     # --------------------------------------------------------
 
-    if args.load_weights is not None:
+    if (
+        args.load_weights
+        is not None
+    ):
 
         load_model_weights_only(
             model=model,
@@ -1064,22 +931,19 @@ def main():
             device=device,
         )
 
-    # --------------------------------------------------------
-    # Load ResNet classification weights only
-    # --------------------------------------------------------
-
-    if (
-        args.load_backbone_weights
-        is not None
-    ):
-
-        load_backbone_weights_only(
-            model=model,
-            checkpoint_path=(
-                args.load_backbone_weights
-            ),
-            device=device,
-        )
+    # NOTE:
+    #
+    # We DO NOT call another backbone loader here.
+    #
+    # If --load-backbone-weights was supplied, the checkpoint
+    # has already been loaded by:
+    #
+    # DetectionFramework
+    #     -> FPN
+    #         -> Backbone(path_model)
+    #
+    # This avoids initializing ImageNet first and then
+    # replacing the backbone afterwards.
 
     print_model_information(
         model
@@ -1197,7 +1061,6 @@ def main():
             GRADIENT_EVERY_N_STEPS
         ),
 
-        # NEW
         freeze_resnet_epochs=(
             args.freeze_resnet
         ),
