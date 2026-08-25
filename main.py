@@ -4,7 +4,9 @@ import os
 import torch
 import torch.multiprocessing as mp
 
-mp.set_sharing_strategy("file_system")
+mp.set_sharing_strategy(
+    "file_system"
+)
 
 from src.config import (
     IMAGE_SIZE,
@@ -33,19 +35,34 @@ from src.config import (
     RESNET50_CHEST_XRAY_CHECKPOINT,
 )
 
-from src.datasets.RSNAPneumoniaDataset import RSNAPneumoniaDataset
+from src.datasets.RSNAPneumoniaDataset import (
+    RSNAPneumoniaDataset
+)
 
 from src.datasets.transforms import (
     get_train_transforms,
     get_test_transforms,
 )
 
-from src.models.detector import DetectionFramework
-from src.models.target_generator import TargetGenerator
-from src.detection_loss import DetectionLoss
-from src.inference import DetectionPostProcessor
-from src.evaluate import DetectionEvaluator
-from src.train import Trainer
+from src.models.detector import (
+    DetectionFramework
+)
+
+from src.detection_loss import (
+    DetectionLoss
+)
+
+from src.inference import (
+    DetectionPostProcessor
+)
+
+from src.evaluate import (
+    DetectionEvaluator
+)
+
+from src.train import (
+    Trainer
+)
 
 
 # ============================================================
@@ -53,8 +70,11 @@ from src.train import Trainer
 # ============================================================
 
 def parse_args():
+
     parser = argparse.ArgumentParser(
-        description="Train FCOS-like pneumonia detector."
+        description=(
+            "Train FCOS-like pneumonia detector."
+        )
     )
 
     # ---------------------------------------------------------
@@ -65,7 +85,9 @@ def parse_args():
         "--experiment",
         type=str,
         required=True,
-        help="Experiment name, e.g. exp1.",
+        help=(
+            "Experiment name, e.g. exp1."
+        ),
     )
 
     # ---------------------------------------------------------
@@ -82,7 +104,8 @@ def parse_args():
         default="imagenet",
         help=(
             "Backbone initialization: "
-            "ImageNet pretrained or chest-X-ray pretrained."
+            "ImageNet pretrained or "
+            "chest-X-ray pretrained."
         ),
     )
 
@@ -94,21 +117,44 @@ def parse_args():
         "--epochs",
         type=int,
         default=NUM_EPOCHS,
-        help=f"Number of training epochs. Default: {NUM_EPOCHS}",
+        help=(
+            f"Number of training epochs. "
+            f"Default: {NUM_EPOCHS}"
+        ),
     )
 
     parser.add_argument(
         "--lr",
         type=float,
         default=LEARNING_RATE,
-        help=f"Learning rate. Default: {LEARNING_RATE}",
+        help=(
+            f"Learning rate. "
+            f"Default: {LEARNING_RATE}"
+        ),
     )
 
     parser.add_argument(
         "--batch-size",
         type=int,
         default=BATCH_SIZE,
-        help=f"Training/validation batch size. Default: {BATCH_SIZE}",
+        help=(
+            f"Training/validation batch size. "
+            f"Default: {BATCH_SIZE}"
+        ),
+    )
+
+    # ---------------------------------------------------------
+    # ResNet freeze
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--freeze-resnet",
+        type=int,
+        default=0,
+        help=(
+            "Freeze the ResNet backbone for the "
+            "first N epochs. Default: 0."
+        ),
     )
 
     # ---------------------------------------------------------
@@ -125,7 +171,7 @@ def parse_args():
     )
 
     # ---------------------------------------------------------
-    # Load only weights
+    # Load complete detector weights only
     # ---------------------------------------------------------
 
     parser.add_argument(
@@ -133,9 +179,24 @@ def parse_args():
         type=str,
         default=None,
         help=(
-            "Load only model weights from a checkpoint. "
-            "Optimizer, scheduler, epoch, global step and "
-            "best metric are NOT restored."
+            "Load only model weights from a detector "
+            "checkpoint. Optimizer, scheduler, epoch, "
+            "global step and best metric are NOT restored."
+        ),
+    )
+
+    # ---------------------------------------------------------
+    # Load ResNet backbone weights only
+    # ---------------------------------------------------------
+
+    parser.add_argument(
+        "--load-backbone-weights",
+        type=str,
+        default=None,
+        help=(
+            "Load only ResNet backbone weights from "
+            "a classification checkpoint. "
+            "The classifier head is ignored."
         ),
     )
 
@@ -146,14 +207,18 @@ def parse_args():
 # Parameter helpers
 # ============================================================
 
-def _count_parameters(module):
+def _count_parameters(
+    module
+):
     return sum(
         parameter.numel()
         for parameter in module.parameters()
     )
 
 
-def _count_trainable_parameters(module):
+def _count_trainable_parameters(
+    module
+):
     return sum(
         parameter.numel()
         for parameter in module.parameters()
@@ -161,29 +226,45 @@ def _count_trainable_parameters(module):
     )
 
 
-def count_model_parameters(model):
+def count_model_parameters(
+    model
+):
+
     backbone = model.fpn.backbone
 
-    backbone_parameters = _count_parameters(
-        backbone
+    backbone_parameters = (
+        _count_parameters(
+            backbone
+        )
     )
 
-    backbone_trainable = _count_trainable_parameters(
-        backbone
+    backbone_trainable = (
+        _count_trainable_parameters(
+            backbone
+        )
     )
 
     fpn_parameters = 0
     fpn_trainable = 0
 
-    for name, parameter in model.fpn.named_parameters():
+    for (
+        name,
+        parameter
+    ) in model.fpn.named_parameters():
 
-        if name.startswith("backbone."):
+        if name.startswith(
+            "backbone."
+        ):
             continue
 
-        fpn_parameters += parameter.numel()
+        fpn_parameters += (
+            parameter.numel()
+        )
 
         if parameter.requires_grad:
-            fpn_trainable += parameter.numel()
+            fpn_trainable += (
+                parameter.numel()
+            )
 
     heads = {}
     heads_trainable = {}
@@ -196,10 +277,15 @@ def count_model_parameters(model):
         "P7": model.head7,
     }
 
-    for level, head in head_modules.items():
+    for (
+        level,
+        head
+    ) in head_modules.items():
 
-        heads[level] = _count_parameters(
-            head
+        heads[level] = (
+            _count_parameters(
+                head
+            )
         )
 
         heads_trainable[level] = (
@@ -235,16 +321,26 @@ def count_model_parameters(model):
 # Print model information
 # ============================================================
 
-def print_model_information(model):
+def print_model_information(
+    model
+):
 
     counts = count_model_parameters(
         model
     )
 
     print()
-    print("=" * 60)
-    print("Model parameters")
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
+
+    print(
+        "Model parameters"
+    )
+
+    print(
+        "=" * 60
+    )
 
     print(
         f"Backbone: "
@@ -263,7 +359,9 @@ def print_model_information(model):
     )
 
     print()
-    print("Detection heads:")
+    print(
+        "Detection heads:"
+    )
 
     for level in (
         "P3",
@@ -273,8 +371,13 @@ def print_model_information(model):
         "P7",
     ):
 
-        parameters = counts["heads"][level]
-        trainable = counts["heads_trainable"][level]
+        parameters = (
+            counts["heads"][level]
+        )
+
+        trainable = (
+            counts["heads_trainable"][level]
+        )
 
         print(
             f"  {level}: "
@@ -283,7 +386,9 @@ def print_model_information(model):
             f"trainable={trainable:,}"
         )
 
-    print("-" * 60)
+    print(
+        "-" * 60
+    )
 
     print(
         f"Total:    "
@@ -297,12 +402,15 @@ def print_model_information(model):
         f"({counts['trainable'] / 1e6:.2f} M)"
     )
 
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
+
     print()
 
 
 # ============================================================
-# Load model weights only
+# Load detector weights only
 # ============================================================
 
 def load_model_weights_only(
@@ -321,7 +429,9 @@ def load_model_weights_only(
         - best metric
     """
 
-    if not os.path.isfile(checkpoint_path):
+    if not os.path.isfile(
+        checkpoint_path
+    ):
         raise FileNotFoundError(
             "Weights checkpoint not found:\n"
             f"{checkpoint_path}"
@@ -331,6 +441,7 @@ def load_model_weights_only(
     print(
         "[LOG] Loading ONLY model weights from:"
     )
+
     print(
         f"      {checkpoint_path}"
     )
@@ -341,19 +452,28 @@ def load_model_weights_only(
         weights_only=False,
     )
 
-    if not isinstance(checkpoint, dict):
+    if not isinstance(
+        checkpoint,
+        dict,
+    ):
         raise TypeError(
             "Checkpoint must be a dictionary."
         )
 
-    if "model_state_dict" not in checkpoint:
+    if (
+        "model_state_dict"
+        not in checkpoint
+    ):
         raise KeyError(
-            f"Checkpoint does not contain "
-            f"'model_state_dict':\n{checkpoint_path}"
+            "Checkpoint does not contain "
+            "'model_state_dict':\n"
+            f"{checkpoint_path}"
         )
 
     model.load_state_dict(
-        checkpoint["model_state_dict"],
+        checkpoint[
+            "model_state_dict"
+        ],
         strict=True,
     )
 
@@ -362,9 +482,195 @@ def load_model_weights_only(
     print(
         "[LOG] Model weights loaded successfully."
     )
+
     print(
         "[LOG] Optimizer/scheduler/training state "
         "will start fresh."
+    )
+
+
+# ============================================================
+# Load ResNet backbone weights only
+# ============================================================
+
+def load_backbone_weights_only(
+    model,
+    checkpoint_path,
+    device,
+):
+    """
+    Load only ResNet backbone weights from the
+    classification checkpoint.
+
+    The classification head (fc.*) is intentionally ignored.
+
+    Compatible keys are matched by name and shape after
+    removing common prefixes such as:
+        module.
+        backbone.
+        fpn.backbone.
+    """
+
+    if not os.path.isfile(
+        checkpoint_path
+    ):
+        raise FileNotFoundError(
+            "Backbone checkpoint not found:\n"
+            f"{checkpoint_path}"
+        )
+
+    print()
+    print(
+        "[LOG] Loading ONLY ResNet backbone "
+        "weights from:"
+    )
+
+    print(
+        f"      {checkpoint_path}"
+    )
+
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location=device,
+        weights_only=False,
+    )
+
+    if not isinstance(
+        checkpoint,
+        dict,
+    ):
+        raise TypeError(
+            "Backbone checkpoint must be a dictionary."
+        )
+
+    if (
+        "model_state_dict"
+        in checkpoint
+    ):
+
+        state_dict = (
+            checkpoint[
+                "model_state_dict"
+            ]
+        )
+
+    elif (
+        "state_dict"
+        in checkpoint
+    ):
+
+        state_dict = (
+            checkpoint[
+                "state_dict"
+            ]
+        )
+
+    else:
+
+        state_dict = checkpoint
+
+    backbone = (
+        model.fpn.backbone
+    )
+
+    current_state = (
+        backbone.state_dict()
+    )
+
+    compatible = {}
+    skipped = []
+
+    for (
+        key,
+        value
+    ) in state_dict.items():
+
+        candidate_keys = [
+            key,
+            key.removeprefix(
+                "module."
+            ),
+            key.removeprefix(
+                "backbone."
+            ),
+            key.removeprefix(
+                "fpn.backbone."
+            ),
+        ]
+
+        matched_key = None
+
+        for candidate in candidate_keys:
+
+            if (
+                candidate
+                in current_state
+                and
+                current_state[
+                    candidate
+                ].shape
+                ==
+                value.shape
+            ):
+
+                matched_key = candidate
+                break
+
+        if matched_key is not None:
+
+            compatible[
+                matched_key
+            ] = value
+
+        else:
+
+            skipped.append(
+                key
+            )
+
+    if not compatible:
+        raise RuntimeError(
+            "No compatible ResNet backbone "
+            "weights were found in checkpoint:\n"
+            f"{checkpoint_path}"
+        )
+
+    missing_before_load = [
+        key
+        for key in current_state
+        if key not in compatible
+    ]
+
+    backbone.load_state_dict(
+        compatible,
+        strict=False,
+    )
+
+    del checkpoint
+
+    print(
+        "[LOG] ResNet backbone weights "
+        "loaded successfully."
+    )
+
+    print(
+        f"[LOG] Compatible parameters: "
+        f"{len(compatible)}"
+    )
+
+    print(
+        f"[LOG] Skipped parameters: "
+        f"{len(skipped)}"
+    )
+
+    print(
+        f"[LOG] Missing backbone parameters: "
+        f"{len(missing_before_load)}"
+    )
+
+    print(
+        "[LOG] Classification head "
+        "(fc.*) is intentionally ignored."
     )
 
 
@@ -380,26 +686,50 @@ def main():
     # Argument validation
     # ---------------------------------------------------------
 
-    if args.resume and args.load_weights is not None:
+    if args.resume and (
+        args.load_weights is not None
+        or
+        args.load_backbone_weights is not None
+    ):
         raise ValueError(
-            "--resume and --load-weights "
+            "--resume cannot be used together with "
+            "--load-weights or "
+            "--load-backbone-weights."
+        )
+
+    if (
+        args.load_weights is not None
+        and
+        args.load_backbone_weights is not None
+    ):
+        raise ValueError(
+            "--load-weights and "
+            "--load-backbone-weights "
             "cannot be used together."
         )
 
     if args.epochs < 1:
         raise ValueError(
-            f"--epochs must be >= 1, got {args.epochs}"
+            f"--epochs must be >= 1, "
+            f"got {args.epochs}"
         )
 
     if args.lr <= 0:
         raise ValueError(
-            f"--lr must be > 0, got {args.lr}"
+            f"--lr must be > 0, "
+            f"got {args.lr}"
         )
 
     if args.batch_size < 1:
         raise ValueError(
             f"--batch-size must be >= 1, "
             f"got {args.batch_size}"
+        )
+
+    if args.freeze_resnet < 0:
+        raise ValueError(
+            f"--freeze-resnet must be >= 0, "
+            f"got {args.freeze_resnet}"
         )
 
     # ========================================================
@@ -411,7 +741,9 @@ def main():
         args.experiment,
     )
 
-    checkpoint_dir = experiment_dir
+    checkpoint_dir = (
+        experiment_dir
+    )
 
     log_dir = os.path.join(
         experiment_dir,
@@ -453,48 +785,87 @@ def main():
     # ========================================================
 
     print()
-    print("=" * 60)
-    print("Training configuration")
-    print("=" * 60)
-
     print(
-        f"Experiment:      {args.experiment}"
+        "=" * 60
     )
 
     print(
-        f"Backbone:        {args.backbone}"
+        "Training configuration"
     )
 
     print(
-        f"Epochs:          {args.epochs}"
+        "=" * 60
     )
 
     print(
-        f"Batch size:      {args.batch_size}"
+        f"Experiment:          "
+        f"{args.experiment}"
     )
 
     print(
-        f"Learning rate:   {args.lr:.2e}"
+        f"Backbone:            "
+        f"{args.backbone}"
     )
 
     print(
-        f"Weight decay:    {WEIGHT_DECAY:.2e}"
+        f"Epochs:              "
+        f"{args.epochs}"
     )
 
     print(
-        f"Scheduler:       "
+        f"Batch size:          "
+        f"{args.batch_size}"
+    )
+
+    print(
+        f"Learning rate:       "
+        f"{args.lr:.2e}"
+    )
+
+    print(
+        f"Weight decay:        "
+        f"{WEIGHT_DECAY:.2e}"
+    )
+
+    print(
+        f"Scheduler:           "
         f"{'StepLR' if USE_SCHEDULER else 'disabled'}"
     )
 
     if USE_SCHEDULER:
+
         print(
-            f"LR step size:   {LR_STEP_SIZE}"
-        )
-        print(
-            f"LR gamma:       {LR_GAMMA}"
+            f"LR step size:       "
+            f"{LR_STEP_SIZE}"
         )
 
-    print("=" * 60)
+        print(
+            f"LR gamma:           "
+            f"{LR_GAMMA}"
+        )
+
+    print(
+        f"Freeze ResNet:       "
+        f"{args.freeze_resnet} epochs"
+    )
+
+    if args.load_backbone_weights:
+
+        print(
+            f"Backbone weights:    "
+            f"{args.load_backbone_weights}"
+        )
+
+    elif args.load_weights:
+
+        print(
+            f"Detector weights:    "
+            f"{args.load_weights}"
+        )
+
+    print(
+        "=" * 60
+    )
 
     # ========================================================
     # Resume
@@ -507,10 +878,13 @@ def main():
         ):
             raise FileNotFoundError(
                 "Resume requested but checkpoint "
-                f"does not exist:\n{last_checkpoint}"
+                f"does not exist:\n"
+                f"{last_checkpoint}"
             )
 
-        resume_checkpoint = last_checkpoint
+        resume_checkpoint = (
+            last_checkpoint
+        )
 
         print()
         print(
@@ -527,16 +901,36 @@ def main():
 
         resume_checkpoint = None
 
-        if args.load_weights is not None:
+        if (
+            args.load_backbone_weights
+            is not None
+        ):
 
             print()
             print(
-                f"[LOG] Starting fine-tuning experiment: "
+                "[LOG] Starting fine-tuning "
+                "from ResNet backbone weights."
+            )
+
+            print(
+                f"[LOG] Initial backbone weights: "
+                f"{args.load_backbone_weights}"
+            )
+
+        elif (
+            args.load_weights
+            is not None
+        ):
+
+            print()
+            print(
+                "[LOG] Starting fine-tuning "
+                "experiment: "
                 f"{args.experiment}"
             )
 
             print(
-                f"[LOG] Initial weights: "
+                f"[LOG] Initial detector weights: "
                 f"{args.load_weights}"
             )
 
@@ -552,7 +946,22 @@ def main():
     # Backbone selection
     # ========================================================
 
-    if args.backbone == "imagenet":
+    # Explicit ResNet checkpoint overrides the normal
+    # backbone initialization.
+    if (
+        args.load_backbone_weights
+        is not None
+    ):
+
+        path_model = None
+
+        print(
+            "[LOG] Detector backbone will be "
+            "initialized from the explicit "
+            "classification checkpoint."
+        )
+
+    elif args.backbone == "imagenet":
 
         path_model = None
 
@@ -572,12 +981,13 @@ def main():
         ):
             raise FileNotFoundError(
                 "Chest-X-ray pretrained backbone "
-                f"not found:\n{path_model}"
+                "not found:\n"
+                f"{path_model}"
             )
 
         print(
             "[LOG] Backbone initialization: "
-            "Chest-X-ray pretrained ResNet-50"
+            "Chest-Xray pretrained ResNet-50"
         )
 
         print(
@@ -586,8 +996,10 @@ def main():
         )
 
     else:
+
         raise ValueError(
-            f"Unsupported backbone: {args.backbone}"
+            f"Unsupported backbone: "
+            f"{args.backbone}"
         )
 
     # ========================================================
@@ -595,22 +1007,28 @@ def main():
     # ========================================================
 
     print()
-    print("[LOG] Creating datasets...")
-
-    train_dataset = RSNAPneumoniaDataset(
-        dcm_path=TRAIN_DCM_PATH,
-        csv_path=CSV_PATH,
-        transform=get_train_transforms(
-            IMAGE_SIZE
-        ),
+    print(
+        "[LOG] Creating datasets..."
     )
 
-    val_dataset = RSNAPneumoniaDataset(
-        dcm_path=TRAIN_DCM_PATH,
-        csv_path=CSV_PATH,
-        transform=get_test_transforms(
-            IMAGE_SIZE
-        ),
+    train_dataset = (
+        RSNAPneumoniaDataset(
+            dcm_path=TRAIN_DCM_PATH,
+            csv_path=CSV_PATH,
+            transform=get_train_transforms(
+                IMAGE_SIZE
+            ),
+        )
+    )
+
+    val_dataset = (
+        RSNAPneumoniaDataset(
+            dcm_path=TRAIN_DCM_PATH,
+            csv_path=CSV_PATH,
+            transform=get_test_transforms(
+                IMAGE_SIZE
+            ),
+        )
     )
 
     print(
@@ -623,14 +1041,19 @@ def main():
     # ========================================================
 
     print()
-    print("[LOG] Creating model...")
+    print(
+        "[LOG] Creating model..."
+    )
 
-    model = DetectionFramework(
-        path_model=path_model,
-    ).to(device)
+    model = (
+        DetectionFramework(
+            path_model=path_model,
+        )
+        .to(device)
+    )
 
     # --------------------------------------------------------
-    # Load only model weights
+    # Load complete detector weights only
     # --------------------------------------------------------
 
     if args.load_weights is not None:
@@ -638,6 +1061,23 @@ def main():
         load_model_weights_only(
             model=model,
             checkpoint_path=args.load_weights,
+            device=device,
+        )
+
+    # --------------------------------------------------------
+    # Load ResNet classification weights only
+    # --------------------------------------------------------
+
+    if (
+        args.load_backbone_weights
+        is not None
+    ):
+
+        load_backbone_weights_only(
+            model=model,
+            checkpoint_path=(
+                args.load_backbone_weights
+            ),
             device=device,
         )
 
@@ -649,41 +1089,51 @@ def main():
     # Loss
     # ========================================================
 
-    criterion = DetectionLoss()
+    criterion = (
+        DetectionLoss()
+    )
 
     # ========================================================
     # Target generator
     # ========================================================
 
-    target_generator = TargetGenerator()
+    target_generator = (
+        TargetGenerator()
+    )
 
     # ========================================================
     # Postprocessor
     # ========================================================
 
-    postprocessor = DetectionPostProcessor(
-        score_threshold=SCORE_THRESHOLD,
-        nms_threshold=NMS_THRESHOLD,
+    postprocessor = (
+        DetectionPostProcessor(
+            score_threshold=SCORE_THRESHOLD,
+            nms_threshold=NMS_THRESHOLD,
+        )
     )
 
     # ========================================================
     # Evaluator
     # ========================================================
 
-    evaluator = DetectionEvaluator(
-        model=model,
-        postprocessor=postprocessor,
-        device=device,
+    evaluator = (
+        DetectionEvaluator(
+            model=model,
+            postprocessor=postprocessor,
+            device=device,
+        )
     )
 
     # ========================================================
     # Optimizer
     # ========================================================
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=WEIGHT_DECAY,
+    optimizer = (
+        torch.optim.Adam(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=WEIGHT_DECAY,
+        )
     )
 
     # ========================================================
@@ -694,10 +1144,12 @@ def main():
 
     if USE_SCHEDULER:
 
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=LR_STEP_SIZE,
-            gamma=LR_GAMMA,
+        scheduler = (
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=LR_STEP_SIZE,
+                gamma=LR_GAMMA,
+            )
         )
 
     # ========================================================
@@ -737,8 +1189,18 @@ def main():
         log_gradients=LOG_GRADIENTS,
         log_hparams=LOG_HPARAMS,
 
-        histogram_every_n_epochs=HISTOGRAM_EVERY_N_EPOCHS,
-        gradient_every_n_steps=GRADIENT_EVERY_N_STEPS,
+        histogram_every_n_epochs=(
+            HISTOGRAM_EVERY_N_EPOCHS
+        ),
+
+        gradient_every_n_steps=(
+            GRADIENT_EVERY_N_STEPS
+        ),
+
+        # NEW
+        freeze_resnet_epochs=(
+            args.freeze_resnet
+        ),
     )
 
     # ========================================================
