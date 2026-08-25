@@ -109,7 +109,7 @@ def parse_args():
         help=(
             "Backbone initialization: "
             "ImageNet pretrained or "
-            "chest-X-ray pretrained."
+            "chest-Xray pretrained."
         ),
     )
 
@@ -495,6 +495,163 @@ def load_model_weights_only(
 
 
 # ============================================================
+# Prepare custom ResNet checkpoint for resume
+# ============================================================
+
+def prepare_resume_backbone_checkpoint(
+    resume_checkpoint,
+    output_path,
+    device,
+):
+    """
+    Build a temporary ResNet-only checkpoint from the complete
+    FCOS resume checkpoint.
+
+    The current Backbone implementation expects a checkpoint
+    whose model_state_dict contains keys such as:
+
+        conv1.weight
+        bn1.weight
+        layer1.0.conv1.weight
+        ...
+        fc.weight
+        fc.bias
+
+    The complete FCOS checkpoint contains these same weights
+    under:
+
+        fpn.backbone.model.*
+
+    This helper extracts only those parameters and strips the
+    prefix so that the existing Backbone class can construct
+    the correct custom ResNet architecture.
+
+    The temporary checkpoint is used ONLY to construct the model.
+    The actual resume is still performed from the complete
+    exp11/last.pt checkpoint by Trainer.
+    """
+
+    print()
+    print(
+        "[RESUME] Preparing ResNet architecture "
+        "from the complete resume checkpoint..."
+    )
+
+    checkpoint = torch.load(
+        resume_checkpoint,
+        map_location=device,
+        weights_only=False,
+    )
+
+    if not isinstance(
+        checkpoint,
+        dict,
+    ):
+        raise TypeError(
+            "Resume checkpoint must be a dictionary."
+        )
+
+    if (
+        "model_state_dict"
+        not in checkpoint
+    ):
+        raise KeyError(
+            "Resume checkpoint does not contain "
+            "'model_state_dict'."
+        )
+
+    state_dict = (
+        checkpoint[
+            "model_state_dict"
+        ]
+    )
+
+    backbone_prefix = (
+        "fpn.backbone.model."
+    )
+
+    backbone_state_dict = {}
+
+    for (
+        key,
+        value,
+    ) in state_dict.items():
+
+        if key.startswith(
+            backbone_prefix
+        ):
+
+            new_key = key[
+                len(backbone_prefix):
+            ]
+
+            backbone_state_dict[
+                new_key
+            ] = value.cpu()
+
+    del checkpoint
+
+    if len(
+        backbone_state_dict
+    ) == 0:
+
+        raise RuntimeError(
+            "Could not extract ResNet backbone "
+            "weights from resume checkpoint.\n"
+            f"Expected keys starting with: "
+            f"{backbone_prefix}"
+        )
+
+    required_keys = (
+        "conv1.weight",
+        "bn1.weight",
+        "layer1.0.conv1.weight",
+        "layer2.0.conv1.weight",
+        "layer3.0.conv1.weight",
+        "layer4.0.conv1.weight",
+    )
+
+    missing_required = [
+        key
+        for key in required_keys
+        if key not in backbone_state_dict
+    ]
+
+    if missing_required:
+
+        raise RuntimeError(
+            "Resume checkpoint does not contain the "
+            "expected custom ResNet-50 structure.\n"
+            f"Missing keys: {missing_required}"
+        )
+
+    torch.save(
+        {
+            "model_state_dict": (
+                backbone_state_dict
+            )
+        },
+        output_path,
+    )
+
+    print(
+        "[RESUME] Extracted "
+        f"{len(backbone_state_dict)} "
+        "ResNet parameters."
+    )
+
+    print(
+        "[RESUME] Temporary backbone checkpoint:"
+    )
+
+    print(
+        f"         {output_path}"
+    )
+
+    return output_path
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -583,6 +740,12 @@ def main():
     last_checkpoint = os.path.join(
         checkpoint_dir,
         "last.pt",
+    )
+
+    # Temporary checkpoint used only when resuming.
+    resume_backbone_checkpoint = os.path.join(
+        checkpoint_dir,
+        ".resume_backbone.pt",
     )
 
     # ========================================================
@@ -717,14 +880,72 @@ def main():
             f"{resume_checkpoint}"
         )
 
+        # ----------------------------------------------------
+        # IMPORTANT:
+        #
+        # We do NOT use:
+        #
+        #   RESNET50_CHEST_XRAY_CHECKPOINT
+        #
+        # and we do NOT use:
+        #
+        #   args.load_backbone_weights
+        #
+        # for resume.
+        #
+        # The complete exp11/last.pt is the source of truth.
+        #
+        # We temporarily extract the ResNet parameters from
+        # last.pt only because the current Backbone class needs
+        # a checkpoint in order to construct the custom ResNet.
+        # ----------------------------------------------------
+
+        path_model = (
+            prepare_resume_backbone_checkpoint(
+                resume_checkpoint=(
+                    resume_checkpoint
+                ),
+                output_path=(
+                    resume_backbone_checkpoint
+                ),
+                device=device,
+            )
+        )
+
+        print(
+            "[RESUME] No external ResNet checkpoint "
+            "will be used."
+        )
+
+        print(
+            "[RESUME] The complete model state will "
+            "be restored from last.pt."
+        )
+
     else:
 
         resume_checkpoint = None
+
+        # ====================================================
+        # Backbone selection for a NEW training run
+        # ====================================================
 
         if (
             args.load_backbone_weights
             is not None
         ):
+
+            path_model = (
+                args.load_backbone_weights
+            )
+
+            if not os.path.isfile(
+                path_model
+            ):
+                raise FileNotFoundError(
+                    "Backbone checkpoint not found:\n"
+                    f"{path_model}"
+                )
 
             print()
             print(
@@ -734,137 +955,92 @@ def main():
 
             print(
                 f"[LOG] Initial backbone weights: "
-                f"{args.load_backbone_weights}"
+                f"{path_model}"
             )
-
-        elif (
-            args.load_weights
-            is not None
-        ):
 
             print()
             print(
-                "[LOG] Starting fine-tuning "
-                f"experiment: {args.experiment}"
+                "[LOG] Backbone initialization:"
             )
 
             print(
-                f"[LOG] Initial detector weights: "
-                f"{args.load_weights}"
+                "      Custom Chest-Xray "
+                "ResNet-50"
+            )
+
+            print(
+                "[LOG] Backbone checkpoint:"
+            )
+
+            print(
+                f"      {path_model}"
+            )
+
+        elif args.backbone == "imagenet":
+
+            path_model = None
+
+            print()
+            print(
+                "[LOG] Starting new experiment:"
+                f" {args.experiment}"
+            )
+
+            print()
+            print(
+                "[LOG] Backbone initialization:"
+            )
+
+            print(
+                "      ImageNet pretrained "
+                "ResNet-50"
+            )
+
+        elif args.backbone == "chest_xray":
+
+            path_model = (
+                RESNET50_CHEST_XRAY_CHECKPOINT
+            )
+
+            if not os.path.isfile(
+                path_model
+            ):
+                raise FileNotFoundError(
+                    "Chest-Xray pretrained backbone "
+                    "not found:\n"
+                    f"{path_model}"
+                )
+
+            print()
+            print(
+                "[LOG] Starting new experiment:"
+                f" {args.experiment}"
+            )
+
+            print()
+            print(
+                "[LOG] Backbone initialization:"
+            )
+
+            print(
+                "      Chest-Xray pretrained "
+                "ResNet-50"
+            )
+
+            print(
+                "[LOG] Backbone checkpoint:"
+            )
+
+            print(
+                f"      {path_model}"
             )
 
         else:
 
-            print()
-            print(
-                f"[LOG] Starting new experiment: "
-                f"{args.experiment}"
+            raise ValueError(
+                f"Unsupported backbone: "
+                f"{args.backbone}"
             )
-
-    # ========================================================
-    # Backbone selection
-    # ========================================================
-
-    if (
-        args.load_backbone_weights
-        is not None
-    ):
-
-        # IMPORTANT:
-        # The custom ResNet checkpoint is passed directly
-        # to DetectionFramework -> FPN -> Backbone.
-        #
-        # Backbone.py already handles:
-        #
-        #   path_model is None
-        #       -> ImageNet
-        #
-        #   path_model is not None
-        #       -> custom ResNet50 + checkpoint
-        #
-        path_model = (
-            args.load_backbone_weights
-        )
-
-        if not os.path.isfile(
-            path_model
-        ):
-            raise FileNotFoundError(
-                "Backbone checkpoint not found:\n"
-                f"{path_model}"
-            )
-
-        print()
-        print(
-            "[LOG] Backbone initialization:"
-        )
-
-        print(
-            "      Custom Chest-Xray "
-            "ResNet-50"
-        )
-
-        print(
-            "[LOG] Backbone checkpoint:"
-        )
-
-        print(
-            f"      {path_model}"
-        )
-
-    elif args.backbone == "imagenet":
-
-        path_model = None
-
-        print()
-        print(
-            "[LOG] Backbone initialization:"
-        )
-
-        print(
-            "      ImageNet pretrained "
-            "ResNet-50"
-        )
-
-    elif args.backbone == "chest_xray":
-
-        path_model = (
-            RESNET50_CHEST_XRAY_CHECKPOINT
-        )
-
-        if not os.path.isfile(
-            path_model
-        ):
-            raise FileNotFoundError(
-                "Chest-Xray pretrained backbone "
-                "not found:\n"
-                f"{path_model}"
-            )
-
-        print()
-        print(
-            "[LOG] Backbone initialization:"
-        )
-
-        print(
-            "      Chest-Xray pretrained "
-            "ResNet-50"
-        )
-
-        print(
-            "[LOG] Backbone checkpoint:"
-        )
-
-        print(
-            f"      {path_model}"
-        )
-
-    else:
-
-        raise ValueError(
-            f"Unsupported backbone: "
-            f"{args.backbone}"
-        )
 
     # ========================================================
     # Dataset
@@ -918,9 +1094,14 @@ def main():
 
     # --------------------------------------------------------
     # Load complete detector weights only
+    #
+    # This is NOT used for --resume.
+    # For resume, Trainer restores the entire checkpoint.
     # --------------------------------------------------------
 
     if (
+        not args.resume
+        and
         args.load_weights
         is not None
     ):
@@ -931,19 +1112,36 @@ def main():
             device=device,
         )
 
-    # NOTE:
+    # --------------------------------------------------------
+    # For resume:
     #
-    # We DO NOT call another backbone loader here.
+    # At this point the architecture exists and has been
+    # initialized using only a temporary ResNet extracted from
+    # last.pt.
     #
-    # If --load-backbone-weights was supplied, the checkpoint
-    # has already been loaded by:
+    # Trainer will now restore the COMPLETE state from:
     #
-    # DetectionFramework
-    #     -> FPN
-    #         -> Backbone(path_model)
+    #     checkpoints/<experiment>/last.pt
     #
-    # This avoids initializing ImageNet first and then
-    # replacing the backbone afterwards.
+    # including model, optimizer, scheduler, epoch,
+    # global step and best metric.
+    # --------------------------------------------------------
+
+    if args.resume:
+
+        print()
+        print(
+            "[RESUME] Model architecture created."
+        )
+
+        print(
+            "[RESUME] Complete checkpoint state will "
+            "now be restored from:"
+        )
+
+        print(
+            f"         {resume_checkpoint}"
+        )
 
     print_model_information(
         model
@@ -1073,6 +1271,39 @@ def main():
     trainer.train(
         num_epochs=args.epochs
     )
+
+    # ========================================================
+    # Cleanup
+    # ========================================================
+
+    if (
+        args.resume
+        and
+        os.path.isfile(
+            resume_backbone_checkpoint
+        )
+    ):
+
+        try:
+            os.remove(
+                resume_backbone_checkpoint
+            )
+
+            print(
+                "[RESUME] Temporary backbone "
+                "checkpoint removed."
+            )
+
+        except OSError as exc:
+
+            print(
+                "[RESUME] Warning: could not remove "
+                "temporary backbone checkpoint:"
+            )
+
+            print(
+                f"         {exc}"
+            )
 
 
 # ============================================================
