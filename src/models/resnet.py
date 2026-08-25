@@ -2,9 +2,6 @@
 import torch
 import torch.nn as nn
 
-import torch
-import torch.nn as nn
-
 class block(nn.Module):
     """
     Bottleneck residual block used in ResNet-50, ResNet-101 and ResNet-152.

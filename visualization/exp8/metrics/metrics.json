@@ -1,0 +1,40 @@
+{
+  "experiment": "exp8",
+  "checkpoint": "checkpoints/exp8/best.pt",
+  "backbone": "chest_xray",
+  "image_size": 512,
+  "official_score_threshold": 0.1,
+  "nms_threshold": 0.5,
+  "visualization_threshold": 0.37,
+  "evaluation_iou_threshold": 0.5,
+  "visualization_overlap_threshold": 0.4,
+  "num_validation_images": 5336,
+  "total_gt_boxes": 1892,
+  "total_visualization_predictions": 3076,
+  "mean_predictions_per_image": 0.5764617691154422,
+  "mean_best_matched_iou": 0.6853030166409093,
+  "box_level": {
+    "tp": 1035,
+    "tn": 0,
+    "fp": 2041,
+    "fn": 857,
+    "accuracy": 0.2631578947368421,
+    "precision": 0.3364759427828348,
+    "recall": 0.5470401691331924,
+    "specificity": 0.0,
+    "f1": 0.41666666666666663,
+    "youden_j": -0.4529598308668076
+  },
+  "image_level": {
+    "tp": 1015,
+    "tn": 3085,
+    "fp": 1049,
+    "fn": 187,
+    "accuracy": 0.7683658170914542,
+    "precision": 0.49176356589147285,
+    "recall": 0.8444259567387687,
+    "specificity": 0.7462506047411708,
+    "f1": 0.6215554194733619,
+    "youden_j": 0.5906765614799396
+  }
+}

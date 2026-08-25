@@ -1,0 +1,40 @@
+{
+  "experiment": "exp9",
+  "checkpoint": "checkpoints/exp9/best.pt",
+  "backbone": "imagenet",
+  "image_size": 512,
+  "official_score_threshold": 0.1,
+  "nms_threshold": 0.5,
+  "visualization_threshold": 0.37,
+  "evaluation_iou_threshold": 0.5,
+  "visualization_overlap_threshold": 0.4,
+  "num_validation_images": 5336,
+  "total_gt_boxes": 1892,
+  "total_visualization_predictions": 2543,
+  "mean_predictions_per_image": 0.47657421289355323,
+  "mean_best_matched_iou": 0.6764317186673565,
+  "box_level": {
+    "tp": 990,
+    "tn": 0,
+    "fp": 1553,
+    "fn": 902,
+    "accuracy": 0.28737300435413643,
+    "precision": 0.3893039716869839,
+    "recall": 0.5232558139534884,
+    "specificity": 0.0,
+    "f1": 0.4464487034949267,
+    "youden_j": -0.4767441860465116
+  },
+  "image_level": {
+    "tp": 981,
+    "tn": 3382,
+    "fp": 752,
+    "fn": 221,
+    "accuracy": 0.8176536731634183,
+    "precision": 0.566070398153491,
+    "recall": 0.8161397670549085,
+    "specificity": 0.8180938558297048,
+    "f1": 0.6684838160136286,
+    "youden_j": 0.6342336228846133
+  }
+}

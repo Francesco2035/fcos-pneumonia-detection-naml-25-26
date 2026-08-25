@@ -13,6 +13,7 @@ dependencies = [
     "tensorboard==2.21.0",
     "torch==2.13.0",
     "torchvision==0.28.0",
+    "plotly>=6.9.0",
 ]
 
 [tool.uv]
