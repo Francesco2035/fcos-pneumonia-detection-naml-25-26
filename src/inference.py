@@ -36,7 +36,7 @@ class DetectionPostProcessor(nn.Module):
         # Keep 0.0 for AP evaluation so that predictions are
         # not discarded before ranking.
         # -----------------------------------------------------
-        score_threshold=0.1,
+        score_threshold=0.05,
 
         nms_threshold=0.5,
     ):
