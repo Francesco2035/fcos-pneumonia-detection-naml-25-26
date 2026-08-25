@@ -10,119 +10,188 @@ LARGE_AREA_MIN = 96.0 ** 2
 # IoU
 # ============================================================
 
-
-def _compute_iou_matrix(boxes1, boxes2):
+def _compute_iou_matrix(
+    boxes1,
+    boxes2,
+):
     """
     Compute pairwise IoU between two sets of XYXY boxes.
+
+    This is mathematically equivalent to the previous
+    implementation, but fully vectorized.
 
     Args:
         boxes1: Tensor[N, 4]
         boxes2: Tensor[M, 4]
 
     Returns:
-        Tensor[N, M], where result[i, j] = IoU(boxes1[i], boxes2[j])
+        Tensor[N, M]
     """
 
-    N, _ = boxes1.shape
-    M, _ = boxes2.shape
+    n = boxes1.shape[0]
+    m = boxes2.shape[0]
 
-    iou_matrix = torch.zeros(
-        (N, M),
-        dtype=torch.float32,
-        device=boxes1.device,
+    if n == 0 or m == 0:
+
+        return torch.zeros(
+            (n, m),
+            dtype=torch.float32,
+            device=boxes1.device,
+        )
+
+    boxes1 = boxes1.float()
+    boxes2 = boxes2.float()
+
+    # --------------------------------------------------------
+    # Intersection
+    # --------------------------------------------------------
+
+    top_left = torch.maximum(
+        boxes1[:, None, :2],
+        boxes2[None, :, :2],
     )
 
-    if N == 0 or M == 0:
-        return iou_matrix
+    bottom_right = torch.minimum(
+        boxes1[:, None, 2:],
+        boxes2[None, :, 2:],
+    )
 
-    for i in range(N):
-        for j in range(M):
-            box1 = boxes1[i]
-            box2 = boxes2[j]
+    intersection_wh = torch.clamp(
+        bottom_right - top_left,
+        min=0.0,
+    )
 
-            x11, y11, x12, y12 = box1
-            x21, y21, x22, y22 = box2
+    intersection_area = (
+        intersection_wh[..., 0]
+        *
+        intersection_wh[..., 1]
+    )
 
-            # Intersection rectangle.
-            x_left = torch.maximum(x11, x21)
-            y_top = torch.maximum(y11, y21)
-            x_right = torch.minimum(x12, x22)
-            y_bottom = torch.minimum(y12, y22)
+    # --------------------------------------------------------
+    # Box areas
+    # --------------------------------------------------------
 
-            # No overlap -> zero width/height.
-            intersection_width = torch.clamp(
-                x_right - x_left,
-                min=0.0,
-            )
-            intersection_height = torch.clamp(
-                y_bottom - y_top,
-                min=0.0,
-            )
+    width1 = torch.clamp(
+        boxes1[:, 2] - boxes1[:, 0],
+        min=0.0,
+    )
 
-            intersection_area = (
-                intersection_width * intersection_height
-            )
+    height1 = torch.clamp(
+        boxes1[:, 3] - boxes1[:, 1],
+        min=0.0,
+    )
 
-            area1 = torch.clamp(x12 - x11, min=0.0) * torch.clamp(
-                y12 - y11, min=0.0
-            )
-            area2 = torch.clamp(x22 - x21, min=0.0) * torch.clamp(
-                y22 - y21, min=0.0
-            )
+    width2 = torch.clamp(
+        boxes2[:, 2] - boxes2[:, 0],
+        min=0.0,
+    )
 
-            union_area = area1 + area2 - intersection_area
+    height2 = torch.clamp(
+        boxes2[:, 3] - boxes2[:, 1],
+        min=0.0,
+    )
 
-            # Small epsilon avoids division by zero.
-            iou = intersection_area / (union_area + 1e-6)
-            iou_matrix[i, j] = iou
+    area1 = width1 * height1
+    area2 = width2 * height2
 
-    return iou_matrix
+    # --------------------------------------------------------
+    # Union + IoU
+    # --------------------------------------------------------
+
+    union_area = (
+        area1[:, None]
+        +
+        area2[None, :]
+        -
+        intersection_area
+    )
+
+    return (
+        intersection_area
+        /
+        (union_area + 1e-6)
+    )
 
 
 # ============================================================
-# Matching
+# Greedy matching
 # ============================================================
 
-
-def _match_predictions(pred, gt, iou_threshold=0.5):
+def _match_predictions(
+    pred,
+    gt,
+    iou_threshold=0.5,
+):
     """
     Match predictions to GT boxes for one image.
 
-    Predictions are processed by descending confidence score.
-    Each GT box can be matched at most once.
+    This preserves the exact semantics of the original
+    implementation:
 
-    Returns a dictionary with scores, TP/FP flags, matched GT indices,
-    and the number of GT boxes in the image.
+        1. predictions are sorted by descending score;
+        2. every prediction chooses its best-IoU GT;
+        3. a prediction is TP iff:
+              best_iou >= threshold
+              AND that GT has not already been matched;
+        4. otherwise it is FP.
+
+    The expensive pairwise IoU computation and duplicate
+    resolution are vectorized.
     """
 
     boxes_pred = pred["boxes"]
     boxes_gt = gt["boxes"]
     scores = pred["scores"]
 
-    order = scores.argsort(descending=True)
+    # --------------------------------------------------------
+    # Sort predictions by descending confidence.
+    # --------------------------------------------------------
+
+    order = scores.argsort(
+        descending=True
+    )
+
+    sorted_boxes = boxes_pred[order]
     sorted_scores = scores[order]
 
-    matched_gt = set()
-    tp = []
-    fp = []
+    num_predictions = (
+        sorted_boxes.shape[0]
+    )
 
-    # No predictions.
-    if len(boxes_pred) == 0:
+    num_gt = (
+        boxes_gt.shape[0]
+    )
+
+    # --------------------------------------------------------
+    # No predictions
+    # --------------------------------------------------------
+
+    if num_predictions == 0:
+
         return {
             "scores": sorted_scores,
             "tp": torch.empty(
-                (0,), dtype=torch.int64, device=scores.device
+                (0,),
+                dtype=torch.int64,
+                device=scores.device,
             ),
             "fp": torch.empty(
-                (0,), dtype=torch.int64, device=scores.device
+                (0,),
+                dtype=torch.int64,
+                device=scores.device,
             ),
-            "matched_gt": matched_gt,
-            "num_gt": len(boxes_gt),
+            "matched_gt": set(),
+            "num_gt": num_gt,
         }
 
-    # No GT: every prediction is a false positive.
-    if len(boxes_gt) == 0:
-        num_predictions = len(boxes_pred)
+    # --------------------------------------------------------
+    # No GT
+    #
+    # Every prediction is FP.
+    # --------------------------------------------------------
+
+    if num_gt == 0:
+
         return {
             "scores": sorted_scores,
             "tp": torch.zeros(
@@ -135,49 +204,150 @@ def _match_predictions(pred, gt, iou_threshold=0.5):
                 dtype=torch.int64,
                 device=scores.device,
             ),
-            "matched_gt": matched_gt,
+            "matched_gt": set(),
             "num_gt": 0,
         }
 
-    iou_matrix = _compute_iou_matrix(boxes_pred, boxes_gt)
+    # --------------------------------------------------------
+    # Pairwise IoU
+    # --------------------------------------------------------
 
-    for pred_idx in order:
-        prediction_ious = iou_matrix[pred_idx]
+    iou_matrix = _compute_iou_matrix(
+        sorted_boxes,
+        boxes_gt,
+    )
 
-        best_iou, best_gt = torch.max(prediction_ious, dim=0)
-        best_iou = float(best_iou.item())
-        best_gt = int(best_gt.item())
+    # For every prediction:
+    #
+    #   best_iou[p]
+    #   best_gt[p]
+    #
+    # exactly corresponds to:
+    #
+    # torch.max(iou_matrix[pred_idx])
+    #
 
-        # Follows the >= 0.5 convention used by the students' implementation.
-        if best_iou < iou_threshold:
-            tp.append(0)
-            fp.append(1)
-            continue
+    best_iou, best_gt = (
+        torch.max(
+            iou_matrix,
+            dim=1,
+        )
+    )
 
-        # Duplicate prediction for an already matched GT.
-        if best_gt in matched_gt:
-            tp.append(0)
-            fp.append(1)
-            continue
+    # --------------------------------------------------------
+    # Predictions satisfying IoU threshold.
+    # --------------------------------------------------------
 
-        tp.append(1)
-        fp.append(0)
-        matched_gt.add(best_gt)
+    valid = (
+        best_iou
+        >=
+        iou_threshold
+    )
+
+    # --------------------------------------------------------
+    # Resolve duplicates exactly like the original greedy
+    # matching:
+    #
+    # because predictions are already ordered by descending
+    # score, the FIRST qualifying prediction assigned to each
+    # GT becomes TP.
+    #
+    # Every subsequent qualifying prediction for that GT
+    # becomes FP.
+    # --------------------------------------------------------
+
+    prediction_positions = (
+        torch.arange(
+            num_predictions,
+            device=scores.device,
+            dtype=torch.long,
+        )
+    )
+
+    # We only care about qualifying predictions.
+    valid_positions = (
+        prediction_positions[valid]
+    )
+
+    valid_gt = (
+        best_gt[valid]
+    )
+
+    # One position per GT, initialized to "not found".
+    first_match_position = torch.full(
+        (
+            num_gt,
+        ),
+        num_predictions,
+        dtype=torch.long,
+        device=scores.device,
+    )
+
+    # For each GT, get the FIRST qualifying prediction
+    # position.
+    #
+    # This replaces the Python "matched_gt" set while
+    # preserving the original score-ordered greedy semantics.
+    first_match_position.scatter_reduce_(
+        0,
+        valid_gt,
+        valid_positions,
+        reduce="amin",
+        include_self=True,
+    )
+
+    # --------------------------------------------------------
+    # TP:
+    #
+    # a prediction is TP exactly when:
+    #
+    #   1. IoU >= threshold
+    #   2. it is the first qualifying prediction for its GT
+    # --------------------------------------------------------
+
+    tp_mask = (
+        valid
+        &
+        (
+            prediction_positions
+            ==
+            first_match_position[
+                best_gt
+            ]
+        )
+    )
+
+    tp = tp_mask.to(
+        torch.int64
+    )
+
+    fp = (
+        1 - tp
+    )
+
+    # --------------------------------------------------------
+    # Matched GT set
+    #
+    # Kept for API compatibility with the original code.
+    # --------------------------------------------------------
+
+    matched_gt_tensor = (
+        best_gt[tp_mask]
+    )
+
+    matched_gt = set(
+        matched_gt_tensor
+        .detach()
+        .cpu()
+        .tolist()
+    )
 
     return {
         "scores": sorted_scores,
-        "tp": torch.tensor(
-            tp,
-            dtype=torch.int64,
-            device=scores.device,
-        ),
-        "fp": torch.tensor(
-            fp,
-            dtype=torch.int64,
-            device=scores.device,
-        ),
+        "tp": tp,
+        "fp": fp,
         "matched_gt": matched_gt,
-        "num_gt": len(boxes_gt),
+        "num_gt": num_gt,
     }
 
 
@@ -185,42 +355,78 @@ def _match_predictions(pred, gt, iou_threshold=0.5):
 # AP
 # ============================================================
 
-
-def _compute_ap(predictions, targets, iou_threshold=0.5):
+def _compute_ap(
+    predictions,
+    targets,
+    iou_threshold=0.5,
+):
     """
     Compute Average Precision over the whole dataset.
 
-    Matching is image-local; AP aggregation is dataset-global.
-    Uses 101-point interpolated precision/recall, following the reference
-    implementation used by the other students when the paper leaves this
-    numerical detail unspecified.
+    Matching is image-local.
+    AP aggregation is dataset-global.
+
+    Uses the same 101-point interpolated precision/recall
+    calculation as the original implementation.
     """
 
     all_scores = []
     all_tp = []
+
     total_gt = 0
 
-    for pred, gt in zip(predictions, targets):
+    # --------------------------------------------------------
+    # Per-image matching
+    # --------------------------------------------------------
+
+    for pred, gt in zip(
+        predictions,
+        targets,
+    ):
+
         result = _match_predictions(
             pred,
             gt,
             iou_threshold=iou_threshold,
         )
 
-        all_scores.append(result["scores"])
-        all_tp.append(result["tp"])
-        total_gt += result["num_gt"]
+        all_scores.append(
+            result["scores"]
+        )
+
+        all_tp.append(
+            result["tp"]
+        )
+
+        total_gt += (
+            result["num_gt"]
+        )
+
+    # --------------------------------------------------------
+    # No GT
+    # --------------------------------------------------------
 
     if total_gt == 0:
+
         return {
             "AP": 0.0,
             "precisions": [],
             "recalls": [],
             "num_gt": 0,
-            "num_pred": int(sum(t.numel() for t in all_scores)),
+            "num_pred": int(
+                sum(
+                    tensor.numel()
+                    for tensor in all_scores
+                )
+            ),
         }
+
+    # --------------------------------------------------------
+    # No predictions
+    # --------------------------------------------------------
 
     if len(all_scores) == 0:
+
         return {
             "AP": 0.0,
             "precisions": [],
@@ -229,10 +435,20 @@ def _compute_ap(predictions, targets, iou_threshold=0.5):
             "num_pred": 0,
         }
 
-    scores = torch.cat(all_scores, dim=0)
-    tp = torch.cat(all_tp, dim=0).to(torch.float32)
+    scores = torch.cat(
+        all_scores,
+        dim=0,
+    )
+
+    tp = torch.cat(
+        all_tp,
+        dim=0,
+    ).to(
+        torch.float32
+    )
 
     if scores.numel() == 0:
+
         return {
             "AP": 0.0,
             "precisions": [],
@@ -241,19 +457,54 @@ def _compute_ap(predictions, targets, iou_threshold=0.5):
             "num_pred": 0,
         }
 
-    # Global ranking is required for AP.
-    order = scores.argsort(descending=True)
+    # --------------------------------------------------------
+    # Global ranking required for AP
+    # --------------------------------------------------------
+
+    order = scores.argsort(
+        descending=True
+    )
+
     tp = tp[order]
+
     fp = 1.0 - tp
 
-    tp_cumsum = torch.cumsum(tp, dim=0)
-    fp_cumsum = torch.cumsum(fp, dim=0)
+    tp_cumsum = torch.cumsum(
+        tp,
+        dim=0,
+    )
 
-    recalls = tp_cumsum / float(total_gt)
-    precisions = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-6)
+    fp_cumsum = torch.cumsum(
+        fp,
+        dim=0,
+    )
 
-    # 101-point interpolation.
+    recalls = (
+        tp_cumsum
+        /
+        float(total_gt)
+    )
+
+    precisions = (
+        tp_cumsum
+        /
+        (
+            tp_cumsum
+            +
+            fp_cumsum
+            +
+            1e-6
+        )
+    )
+
+    # --------------------------------------------------------
+    # 101-point interpolation
+    #
+    # Identical numerical procedure to the original.
+    # --------------------------------------------------------
+
     ap = 0.0
+
     recall_grid = torch.linspace(
         0.0,
         1.0,
@@ -261,19 +512,40 @@ def _compute_ap(predictions, targets, iou_threshold=0.5):
         device=recalls.device,
     )
 
-    for recall_threshold in recall_grid:
-        valid_precisions = precisions[recalls >= recall_threshold]
-        if valid_precisions.numel() > 0:
-            ap += float(valid_precisions.max().item())
+    for recall_threshold in (
+        recall_grid
+    ):
+
+        valid_precisions = (
+            precisions[
+                recalls
+                >= recall_threshold
+            ]
+        )
+
+        if (
+            valid_precisions.numel()
+            > 0
+        ):
+
+            ap += float(
+                valid_precisions.max().item()
+            )
 
     ap /= 101.0
 
     return {
         "AP": float(ap),
-        "precisions": precisions.tolist(),
-        "recalls": recalls.tolist(),
+        "precisions": (
+            precisions.tolist()
+        ),
+        "recalls": (
+            recalls.tolist()
+        ),
         "num_gt": total_gt,
-        "num_pred": int(scores.numel()),
+        "num_pred": int(
+            scores.numel()
+        ),
     }
 
 
@@ -281,19 +553,30 @@ def _compute_ap(predictions, targets, iou_threshold=0.5):
 # Box area helpers
 # ============================================================
 
-
-def _compute_box_areas(boxes):
-    """Return XYXY box areas as a 1D tensor."""
+def _compute_box_areas(
+    boxes,
+):
+    """
+    Return XYXY box areas as a 1D tensor.
+    """
 
     if len(boxes) == 0:
+
         return torch.empty(
             (0,),
             dtype=torch.float32,
             device=boxes.device,
         )
 
-    widths = torch.clamp(boxes[:, 2] - boxes[:, 0], min=0.0)
-    heights = torch.clamp(boxes[:, 3] - boxes[:, 1], min=0.0)
+    widths = torch.clamp(
+        boxes[:, 2] - boxes[:, 0],
+        min=0.0,
+    )
+
+    heights = torch.clamp(
+        boxes[:, 3] - boxes[:, 1],
+        min=0.0,
+    )
 
     return widths * heights
 
@@ -302,12 +585,16 @@ def _compute_box_areas(boxes):
 # Area-filtered targets
 # ============================================================
 
-
-def _filter_targets_by_area(targets, min_area=None, max_area=None):
+def _filter_targets_by_area(
+    targets,
+    min_area=None,
+    max_area=None,
+):
     """
-    Keep only GT boxes whose area is within the requested interval.
+    Keep only GT boxes whose area is within the requested
+    interval.
 
-    Bounds are interpreted as:
+    Bounds:
         area >= min_area
         area <  max_area
     """
@@ -315,10 +602,18 @@ def _filter_targets_by_area(targets, min_area=None, max_area=None):
     filtered = []
 
     for target in targets:
-        boxes = target["boxes"]
-        labels = target.get("labels", None)
 
-        areas = _compute_box_areas(boxes)
+        boxes = target["boxes"]
+
+        labels = target.get(
+            "labels",
+            None,
+        )
+
+        areas = _compute_box_areas(
+            boxes
+        )
+
         mask = torch.ones(
             len(boxes),
             dtype=torch.bool,
@@ -326,19 +621,34 @@ def _filter_targets_by_area(targets, min_area=None, max_area=None):
         )
 
         if min_area is not None:
-            mask &= areas >= min_area
+
+            mask &= (
+                areas
+                >=
+                min_area
+            )
 
         if max_area is not None:
-            mask &= areas < max_area
+
+            mask &= (
+                areas
+                <
+                max_area
+            )
 
         new_target = {
             "boxes": boxes[mask],
         }
 
         if labels is not None:
-            new_target["labels"] = labels[mask]
 
-        filtered.append(new_target)
+            new_target["labels"] = (
+                labels[mask]
+            )
+
+        filtered.append(
+            new_target
+        )
 
     return filtered
 
@@ -346,7 +656,6 @@ def _filter_targets_by_area(targets, min_area=None, max_area=None):
 # ============================================================
 # AR
 # ============================================================
-
 
 def _compute_ar(
     predictions,
@@ -357,88 +666,201 @@ def _compute_ar(
     """
     Compute Average Recall over the dataset.
 
-    For each image, keep the top-K predictions by score, then greedily
-    match them to GT boxes using the same IoU threshold as AP.
+    For each image:
+        1. keep top-K predictions by score;
+        2. greedily match predictions to GT;
+        3. count unique recalled GT boxes.
+
+    The greedy matching is vectorized while preserving the
+    original score-ordered behavior.
     """
 
     total_gt = 0
     total_recalled = 0
 
-    for pred, gt in zip(predictions, targets):
+    for pred, gt in zip(
+        predictions,
+        targets,
+    ):
+
         gt_boxes = gt["boxes"]
+
         pred_boxes = pred["boxes"]
+
         pred_scores = pred["scores"]
 
-        total_gt += len(gt_boxes)
-
-        if len(gt_boxes) == 0 or len(pred_boxes) == 0:
-            continue
-
-        # Keep only the highest-scoring detections.
-        order = pred_scores.argsort(descending=True)[:max_dets]
-        pred_boxes = pred_boxes[order]
-
-        iou_matrix = _compute_iou_matrix(
-            pred_boxes,
-            gt_boxes,
+        total_gt += len(
+            gt_boxes
         )
 
-        matched_gt = set()
+        if (
+            len(gt_boxes) == 0
+            or
+            len(pred_boxes) == 0
+        ):
+            continue
 
-        for pred_idx in range(len(pred_boxes)):
-            best_iou, best_gt = torch.max(
-                iou_matrix[pred_idx],
-                dim=0,
+        # ----------------------------------------------------
+        # Keep highest-scoring detections.
+        # ----------------------------------------------------
+
+        order = (
+            pred_scores
+            .argsort(
+                descending=True
+            )[:max_dets]
+        )
+
+        pred_boxes = (
+            pred_boxes[order]
+        )
+
+        # ----------------------------------------------------
+        # IoU
+        # ----------------------------------------------------
+
+        iou_matrix = (
+            _compute_iou_matrix(
+                pred_boxes,
+                gt_boxes,
             )
+        )
 
-            best_iou = float(best_iou.item())
-            best_gt = int(best_gt.item())
+        best_iou, best_gt = (
+            torch.max(
+                iou_matrix,
+                dim=1,
+            )
+        )
 
-            if best_iou >= iou_threshold and best_gt not in matched_gt:
-                matched_gt.add(best_gt)
-                total_recalled += 1
+        valid = (
+            best_iou
+            >=
+            iou_threshold
+        )
 
-    return total_recalled / max(total_gt, 1)
+        if not torch.any(valid):
+            continue
+
+        # ----------------------------------------------------
+        # Same greedy rule as original:
+        #
+        # first qualifying prediction for every GT wins.
+        # ----------------------------------------------------
+
+        prediction_positions = (
+            torch.arange(
+                len(pred_boxes),
+                device=pred_boxes.device,
+                dtype=torch.long,
+            )
+        )
+
+        valid_positions = (
+            prediction_positions[
+                valid
+            ]
+        )
+
+        valid_gt = (
+            best_gt[valid]
+        )
+
+        first_match_position = (
+            torch.full(
+                (
+                    len(gt_boxes),
+                ),
+                len(pred_boxes),
+                dtype=torch.long,
+                device=pred_boxes.device,
+            )
+        )
+
+        first_match_position.scatter_reduce_(
+            0,
+            valid_gt,
+            valid_positions,
+            reduce="amin",
+            include_self=True,
+        )
+
+        matched = (
+            valid
+            &
+            (
+                prediction_positions
+                ==
+                first_match_position[
+                    best_gt
+                ]
+            )
+        )
+
+        total_recalled += int(
+            matched.sum().item()
+        )
+
+    return (
+        total_recalled
+        /
+        max(total_gt, 1)
+    )
 
 
 # ============================================================
 # Full metrics
 # ============================================================
 
-
-def compute_metrics(predictions, targets):
+def compute_metrics(
+    predictions,
+    targets,
+):
     """
-    Compute the metrics reported by the paper.
+    Compute the metrics reported by the project.
 
     Returns:
         AP      : AP at IoU 0.5
-        AP_M    : AP for medium GT boxes at IoU 0.5
-        AP_L    : AP for large GT boxes at IoU 0.5
-        AR@10   : recall using at most 10 detections per image
+        AP_M    : AP for medium GT boxes
+        AP_L    : AP for large GT boxes
+        AR@10   : recall using at most 10 detections/image
         AR_M    : recall for medium GT boxes
         AR_L    : recall for large GT boxes
     """
 
-    # Main AP uses the paper's IoU > 0.5 evaluation setting;
-    # the reference student implementation uses >= 0.5 in code.
+    # --------------------------------------------------------
+    # Main AP
+    # --------------------------------------------------------
+
     ap = _compute_ap(
         predictions,
         targets,
         iou_threshold=0.5,
     )["AP"]
 
-    # COCO area ranges are used by the paper's experimental setup.
-    medium_targets = _filter_targets_by_area(
-        targets,
-        min_area=MEDIUM_AREA_MIN,
-        max_area=MEDIUM_AREA_MAX,
+    # --------------------------------------------------------
+    # Medium / large GT boxes
+    # --------------------------------------------------------
+
+    medium_targets = (
+        _filter_targets_by_area(
+            targets,
+            min_area=MEDIUM_AREA_MIN,
+            max_area=MEDIUM_AREA_MAX,
+        )
     )
 
-    large_targets = _filter_targets_by_area(
-        targets,
-        min_area=LARGE_AREA_MIN,
-        max_area=None,
+    large_targets = (
+        _filter_targets_by_area(
+            targets,
+            min_area=LARGE_AREA_MIN,
+            max_area=None,
+        )
     )
+
+    # --------------------------------------------------------
+    # AP_M
+    # --------------------------------------------------------
 
     ap_m = _compute_ap(
         predictions,
@@ -446,11 +868,19 @@ def compute_metrics(predictions, targets):
         iou_threshold=0.5,
     )["AP"]
 
+    # --------------------------------------------------------
+    # AP_L
+    # --------------------------------------------------------
+
     ap_l = _compute_ap(
         predictions,
         large_targets,
         iou_threshold=0.5,
     )["AP"]
+
+    # --------------------------------------------------------
+    # AR@10
+    # --------------------------------------------------------
 
     ar_10 = _compute_ar(
         predictions,
@@ -459,12 +889,20 @@ def compute_metrics(predictions, targets):
         max_dets=10,
     )
 
+    # --------------------------------------------------------
+    # AR_M
+    # --------------------------------------------------------
+
     ar_m = _compute_ar(
         predictions,
         medium_targets,
         iou_threshold=0.5,
         max_dets=100,
     )
+
+    # --------------------------------------------------------
+    # AR_L
+    # --------------------------------------------------------
 
     ar_l = _compute_ar(
         predictions,

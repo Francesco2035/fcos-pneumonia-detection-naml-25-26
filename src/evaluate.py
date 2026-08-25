@@ -1,5 +1,9 @@
+import time
+
 import torch
+
 from src.metrics import compute_metrics
+
 
 class DetectionEvaluator:
 
@@ -34,8 +38,6 @@ class DetectionEvaluator:
             Dataset-level detection metrics.
         """
 
-        import time
-
         self.model.eval()
 
         all_predictions = []
@@ -52,11 +54,37 @@ class DetectionEvaluator:
 
         start_time = time.perf_counter()
 
+        total_batches = (
+            max_batches
+            if max_batches is not None
+            else len(dataloader)
+        )
+
+        print()
+        print("=" * 70)
+        print("[VAL] Starting detection evaluation")
+        print("=" * 70)
+
+        print(
+            f"[VAL] Batches:         {total_batches}"
+        )
+
+        print(
+            f"[VAL] Max batches:     {max_batches}"
+        )
+
+        print(
+            f"[VAL] Device:          {self.device}"
+        )
+
         # ---------------------------------------------------------
         # Validation loop
         # ---------------------------------------------------------
 
-        for batch_idx, (images, targets) in enumerate(
+        for batch_idx, (
+            images,
+            targets,
+        ) in enumerate(
             dataloader,
             start=1,
         ):
@@ -117,7 +145,9 @@ class DetectionEvaluator:
                     images_with_detections += 1
 
                     batch_max_score = (
-                        detection["scores"].max().item()
+                        detection["scores"]
+                        .max()
+                        .item()
                     )
 
                     max_detection_score = max(
@@ -133,8 +163,14 @@ class DetectionEvaluator:
 
                 all_targets.append(
                     {
-                        "boxes": target["boxes"].cpu(),
-                        "labels": target["labels"].cpu(),
+                        "boxes": (
+                            target["boxes"]
+                            .cpu()
+                        ),
+                        "labels": (
+                            target["labels"]
+                            .cpu()
+                        ),
                     }
                 )
 
@@ -144,10 +180,7 @@ class DetectionEvaluator:
 
             if (
                 batch_idx % 100 == 0
-                or (
-                    max_batches is not None
-                    and batch_idx == max_batches
-                )
+                or batch_idx == total_batches
             ):
 
                 elapsed = (
@@ -158,23 +191,23 @@ class DetectionEvaluator:
                 progress = (
                     100.0
                     * batch_idx
-                    / (
-                        max_batches
-                        if max_batches is not None
-                        else len(dataloader)
-                    )
+                    / total_batches
+                )
+
+                current_avg = (
+                    total_detections
+                    / total_images
+                    if total_images > 0
+                    else 0.0
                 )
 
                 print(
                     f"[VAL] "
                     f"batch={batch_idx}/"
-                    f"{(
-                        max_batches
-                        if max_batches is not None
-                        else len(dataloader)
-                    )} "
+                    f"{total_batches} "
                     f"progress={progress:.1f}% "
-                    f"time={elapsed / 60.0:.2f} min"
+                    f"time={elapsed / 60.0:.2f} min "
+                    f"detections/img={current_avg:.2f}"
                 )
 
         # ---------------------------------------------------------
@@ -205,50 +238,119 @@ class DetectionEvaluator:
 
         print()
         print(
-            "[VAL] Detection diagnostics"
+            "=" * 70
         )
-        print("-" * 50)
 
         print(
-            f"Images evaluated:       "
+            "[VAL] Inference + post-processing completed"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            f"[VAL] Images evaluated:       "
             f"{total_images}"
         )
 
         print(
-            f"Images with detections: "
+            f"[VAL] Images with detections: "
             f"{images_with_detections} "
             f"({100.0 * detection_image_ratio:.2f}%)"
         )
 
         print(
-            f"Total detections:       "
+            f"[VAL] Total detections:       "
             f"{total_detections}"
         )
 
         print(
-            f"Average detections/img:  "
+            f"[VAL] Average detections/img: "
             f"{average_detections:.4f}"
         )
 
         print(
-            f"Maximum detection score: "
-            f"{max_detection_score:.6f}"
+            f"[VAL] Maximum detection score:"
+            f" {max_detection_score:.6f}"
         )
 
         print(
-            f"Validation time:        "
+            f"[VAL] Inference time:          "
             f"{elapsed / 60.0:.2f} min"
         )
 
-        print("-" * 50)
+        print(
+            "-" * 70
+        )
 
         # ---------------------------------------------------------
         # Dataset-level metrics
         # ---------------------------------------------------------
 
+        print(
+            "[VAL] Starting metric computation..."
+        )
+
+        metrics_start = (
+            time.perf_counter()
+        )
+
         metrics = compute_metrics(
             all_predictions,
             all_targets,
+        )
+
+        metrics_elapsed = (
+            time.perf_counter()
+            - metrics_start
+        )
+
+        print(
+            "[VAL] Metric computation completed"
+        )
+
+        print(
+            f"[VAL] Metrics time:            "
+            f"{metrics_elapsed / 60.0:.2f} min"
+        )
+
+        print(
+            "-" * 70
+        )
+
+        if isinstance(
+            metrics,
+            dict,
+        ):
+
+            for (
+                name,
+                value,
+            ) in metrics.items():
+
+                if isinstance(
+                    value,
+                    (int, float),
+                ):
+                    print(
+                        f"[VAL] "
+                        f"{name:<10}: "
+                        f"{value:.6f}"
+                    )
+
+        total_elapsed = (
+            time.perf_counter()
+            - start_time
+        )
+
+        print(
+            f"[VAL] Total evaluation time: "
+            f"{total_elapsed / 60.0:.2f} min"
+        )
+
+        print(
+            "=" * 70
         )
 
         return metrics
