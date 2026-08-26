@@ -67,7 +67,7 @@ from src.evaluate import (
 from src.train import (
     Trainer,
 )
-from src.trainv2 import (
+from src.train_v2 import (
     TrainerV2,
 )
 
