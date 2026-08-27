@@ -36,3 +36,9 @@ exp14ft:
 
 
 Il modello ImageNet fine-tuned (exp15ft) è stato inizializzato con una ResNet-50 pretrained su ImageNet e addestrato su immagini 512×512 con batch size 8 usando il nuovo TrainerV2. Nella prima fase (exp15) abbiamo usato 20 epoche, congelando la backbone per le prime 3 epoche, con learning rate base 1e-3 per FPN e detection heads; dopo l’unfreeze la backbone ha ricevuto un LR 10× più basso, 1e-4. Il training ha inoltre utilizzato 2 epoche di warm-up, cosine annealing, EMA e gradient clipping. Partendo dal best.pt di exp15, abbiamo poi eseguito il fine-tuning (exp15ft) per 10 epoche con LR base 1e-4 per FPN/heads e 1e-5 per la backbone, mantenendo la stessa recipe V2. Il modello ha raggiunto un best AP@0.5 di 42.17%.
+
+
+
+
+
+Abbiamo pretrainato una ResNet-101 custom sul dataset Chest-Xray per la classificazione binaria NORMAL/PNEUMONIA a 512×512, usando augmentation leggera (horizontal flip e rotazione ±7°), normalizzazione ImageNet, Adam con LR iniziale 1e-5, weight decay 1e-4 e cosine annealing. Il miglior checkpoint ha raggiunto Validation F1 = 0.9637, mentre sul test set abbiamo ottenuto Accuracy = 0.9506, Precision = 0.9650, Recall = 0.9673, F1 = 0.9662 e AUC = 0.9850. Il checkpoint da usare come backbone del detector è checkpoints/pretrain/chest_xray_101/best.pt.
