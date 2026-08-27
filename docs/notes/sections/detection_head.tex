@@ -1,0 +1,228 @@
+\section{Detection Head}
+
+\subsection{Idea generale}
+
+La \textit{detection head} è il componente della rete che riceve le feature
+estratte dal backbone e dalla FPN e le trasforma nelle predizioni necessarie
+per l'object detection. In generale, una head può essere suddivisa in più
+branch, ognuna specializzata in un compito differente, ad esempio la
+classificazione dell'oggetto e la regressione della sua bounding box.
+
+L'idea generale è quindi:
+
+$$
+\text{Feature Map}
+\rightarrow
+\text{Detection Head}
+\rightarrow
+\begin{cases}
+\text{Classification} \\
+\text{Localization}
+\end{cases}
+$$
+
+Nel caso dei detector anchor-free, la predizione viene effettuata direttamente
+su ogni posizione spaziale della feature map invece di utilizzare bounding box
+predefinite come riferimento.
+
+\subsection{RetinaNet}
+
+Un esempio importante è RetinaNet. La rete utilizza due subnet separate,
+una per la classificazione e una per la regressione delle bounding box.
+Entrambe ricevono una feature map della FPN e sono costituite da più
+convoluzioni $3\times3$, seguite da un layer finale di predizione.
+
+La classification subnet produce, per ogni posizione spaziale, le probabilità
+relative alle classi e agli anchor presenti in quella posizione, mentre la box
+regression subnet produce i parametri necessari per correggere le coordinate
+degli anchor.\footnote{Tsung-Yi Lin et al., \textit{Focal Loss for Dense Object
+Detection}, ICCV 2017.}
+
+La struttura può essere schematizzata come:
+
+$$
+\text{FPN feature}
+\rightarrow
+\begin{cases}
+\text{Classification subnet} \\
+\text{Regression subnet}
+\end{cases}
+$$
+
+In RetinaNet le due subnet hanno la stessa struttura generale, ma utilizzano
+parametri separati. La classification subnet termina con $KA$ output per
+posizione, mentre la regression subnet termina con $4A$ output, dove $K$ è il
+numero di classi e $A$ il numero di anchor per posizione.
+
+\subsection{FCOS}
+
+FCOS mantiene la separazione tra classificazione e regressione, ma elimina il
+riferimento agli anchor. Ogni posizione della feature map viene trattata come
+una possibile location dell'oggetto e la regressione predice direttamente le
+distanze dalla posizione ai quattro lati della bounding box:
+
+$$
+(l,t,r,b).
+$$
+
+La detection head di FCOS contiene quindi una branch per la classificazione e
+una branch per la regressione. Il paper descrive per entrambe una sequenza di
+convolutional layers applicata alle feature della FPN. In aggiunta viene
+introdotta una terza branch, la \textit{center-ness branch}, che predice quanto
+una location sia vicina al centro dell'oggetto e serve a ridurre l'influenza
+delle predizioni di bassa qualità.\footnote{Zhi Tian et al.,
+\textit{FCOS: Fully Convolutional One-Stage Object Detection}, ICCV 2019.}
+
+Lo schema concettuale è quindi:
+
+$$
+\text{FPN feature}
+\rightarrow
+\begin{cases}
+\text{Classification} \\
+\text{Regression} \\
+\text{Center-ness}
+\end{cases}
+$$
+
+La classificazione determina \textit{che cosa} è presente in una determinata
+location, la regressione determina \textit{dove} si trova la bounding box,
+mentre la center-ness fornisce un'indicazione della qualità della location
+utilizzata per effettuare la predizione.
+
+\subsection{Detection head del paper sulla pneumonia}
+
+Il paper utilizzato come riferimento per questo progetto descrive una head più
+semplice. Ogni livello della feature pyramid viene elaborato inizialmente da
+una convoluzione $3\times3$ e successivamente da due convoluzioni $1\times1$
+che producono due predizioni distinte, indicate come \textit{CENTER} e
+\textit{SCALE}.
+
+$$
+\text{FPN feature}
+\rightarrow
+3\times3
+\rightarrow
+\begin{cases}
+1\times1 \rightarrow \text{CENTER}\\
+1\times1 \rightarrow \text{SCALE}
+\end{cases}
+$$
+
+Il branch CENTER viene utilizzato per individuare le location associate al
+centro degli oggetti, mentre il branch SCALE viene utilizzato per predire la
+scala della bounding box.\footnote{Linghua Wu et al.,
+\textit{Pneumonia detection based on RSNA dataset and anchor-free deep learning
+detector}, Scientific Reports, 2024.}
+
+\subsection{Detection head del progetto}
+
+La detection head utilizzata nel progetto è più vicina a quella di FCOS che a
+quella descritta nel paper sulla pneumonia.
+
+Ogni livello della FPN $P_3,\ldots,P_7$ viene passato a una
+\textit{DetectionHead}. La head è divisa in due tower principali:
+
+$$
+\text{Feature}
+\rightarrow
+\begin{cases}
+\text{Classification tower}\\
+\text{Regression tower}
+\end{cases}
+$$
+
+La classification tower è costituita, nel progetto, da:
+
+$$
+3\times3\ \text{Conv}
+\rightarrow
+\text{GroupNorm}
+\rightarrow
+\text{ReLU}
+\rightarrow
+1\times1\ \text{Conv}.
+$$
+
+La regression tower utilizza una struttura analoga:
+
+$$
+3\times3\ \text{Conv}
+\rightarrow
+\text{GroupNorm}
+\rightarrow
+\text{ReLU}.
+$$
+
+Dalla regression tower vengono poi prodotte due predizioni separate:
+
+$$
+\text{Regression tower}
+\rightarrow
+\begin{cases}
+1\times1 \rightarrow (l,t,r,b)\\
+1\times1 \rightarrow \text{centerness}
+\end{cases}
+$$
+
+Pertanto, per ogni location di ogni livello della FPN, il modello produce:
+
+$$
+\text{classification},\qquad
+(l,t,r,b),\qquad
+\text{centerness}.
+$$
+
+Nel progetto la classificazione produce attualmente un solo valore per
+location, perché viene utilizzata una sola classe target, la pneumonia.
+
+\subsection{Differenze rispetto ai paper}
+
+La struttura del progetto non coincide esattamente con nessuno dei due paper.
+
+Rispetto al paper sulla pneumonia, il progetto aggiunge una
+\textit{classification branch} esplicita e utilizza una regressione
+$LTRB$, più vicina alla formulazione FCOS, invece della distinzione CENTER/SCALE
+descritta nel paper.
+
+Rispetto a FCOS, la struttura è semplificata: il paper originale utilizza
+quattro convolutional layers nelle branch di classificazione e regressione,
+mentre il progetto utilizza una sola convoluzione $3\times3$ per ciascuna
+tower, seguita da Group Normalization e ReLU.
+
+Inoltre, FCOS condivide le head tra i diversi livelli della feature pyramid,
+mentre nel progetto vengono create cinque istanze separate di
+\texttt{DetectionHead}, una per ciascun livello $P_3,\ldots,P_7$. Il paper
+FCOS descrive infatti la condivisione delle head tra i diversi livelli, pur
+introducendo modifiche specifiche per gestire i differenti range di scala.
+
+Nel complesso, quindi, la detection head del progetto può essere considerata
+una \textit{FCOS-like detection head}: ne mantiene la formulazione
+anchor-free, la classificazione per location, la regressione $LTRB$ e la
+center-ness branch, ma utilizza una struttura più semplice e alcune scelte
+architetturali specifiche del progetto.
+\subsubsection{Group Normalization}
+
+La \textit{Group Normalization} (GN) è una tecnica di normalizzazione delle
+feature map che divide i canali in gruppi e normalizza i valori all'interno di
+ciascun gruppo.
+
+A differenza della Batch Normalization, la Group Normalization non utilizza le
+statistiche dell'intero batch. Questo la rende meno dipendente dalla
+dimensione del batch e quindi particolarmente utile quando si lavora con batch
+molto piccoli, situazione comune nell'object detection a causa dell'elevato
+costo computazionale delle immagini.
+
+Nel progetto la Group Normalization viene utilizzata all'interno delle
+classification e regression tower della detection head:
+
+\[
+\text{Conv}
+\rightarrow
+\text{GroupNorm}
+\rightarrow
+\text{ReLU}.
+\]
+
+Il suo scopo è stabilizzare le attivazioni e rendere l'addestramento più
+robusto, senza richiedere batch grandi.

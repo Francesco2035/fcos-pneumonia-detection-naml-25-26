@@ -6,6 +6,12 @@ from src.models.resnet import ResNet50
 
 
 class Backbone(nn.Module):
+    """
+    Wrapper around ResNet-50 used as the feature extractor for the FPN.
+
+    The backbone exposes the intermediate feature maps C2, C3, C4 and C5
+    instead of the final classification output.
+    """
 
     def __init__(self, path_model):
         super().__init__()

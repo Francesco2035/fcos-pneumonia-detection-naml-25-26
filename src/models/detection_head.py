@@ -2,6 +2,12 @@ import torch.nn as nn
 
 
 class DetectionHead(nn.Module):
+    """
+    Detection head applied to a single FPN level.
+
+    It transforms the input feature map into three predictions:
+    object classification, bounding-box regression, and centerness.
+    """
 
     def __init__(
         self,

@@ -1,0 +1,135 @@
+\section{Feature Pyramid Network}
+
+\subsection{Motivazione}
+
+Una rete convoluzionale profonda, come ResNet-50, produce una gerarchia di
+feature map a diverse risoluzioni spaziali. I layer più profondi hanno una
+risoluzione spaziale più bassa, ma contengono informazioni semantiche più
+ricche, mentre i layer più superficiali mantengono una maggiore risoluzione
+spaziale e una localizzazione più precisa, ma hanno informazioni semantiche
+meno forti.
+
+Questo rappresenta un problema per l'object detection, perché gli oggetti
+possono avere dimensioni molto diverse. Le feature profonde sono utili per
+riconoscere \textit{cosa} è presente nell'immagine, ma sono meno precise nel
+dire \textit{dove} si trova. Al contrario, le feature superficiali sono più
+precise spazialmente, ma hanno una rappresentazione semantica più debole.
+
+La Feature Pyramid Network (FPN) serve quindi a combinare queste due
+informazioni. L'idea è prendere le feature semantiche dei layer profondi e
+propagarle verso i layer a maggiore risoluzione, combinandole con le feature
+superficiali. In questo modo si ottengono feature map a diverse scale che
+mantengono sia una buona informazione semantica sia una buona precisione
+spaziale.\footnote{Tsung-Yi Lin et al., \textit{Feature Pyramid Networks for
+Object Detection}, CVPR 2017.}
+
+\subsection{Struttura della FPN}
+
+La FPN originale utilizza le feature ottenute dagli ultimi blocchi residuali
+di ResNet, indicate come $C_2$, $C_3$, $C_4$ e $C_5$. Queste feature hanno
+rispettivamente stride $4$, $8$, $16$ e $32$ rispetto all'immagine di input.
+
+La costruzione della piramide parte dalla feature più profonda $C_5$. Questa
+viene trasformata tramite una convoluzione $1\times1$ e costituisce il punto
+di partenza del percorso \textit{top-down}. La feature viene poi
+sovracampionata di un fattore 2 e sommata alla corrispondente feature
+proveniente dal backbone, dopo che anch'essa è stata trasformata tramite una
+convoluzione $1\times1$.
+
+Il procedimento viene ripetuto progressivamente verso i livelli a maggiore
+risoluzione:
+
+\[
+C_5 \rightarrow P_5
+\]
+
+\[
+C_4 + \operatorname{Upsample}(P_5) \rightarrow P_4
+\]
+
+\[
+C_3 + \operatorname{Upsample}(P_4) \rightarrow P_3
+\]
+
+\[
+C_2 + \operatorname{Upsample}(P_3) \rightarrow P_2
+\]
+
+La convoluzione $1\times1$ viene utilizzata per portare le feature del
+backbone allo stesso numero di canali, mentre l'upsampling permette di
+allineare la risoluzione spaziale delle feature prima della somma.
+
+Dopo la fusione viene applicata una convoluzione $3\times3$ per ottenere la
+feature finale di ciascun livello. Nel paper originale tutti i livelli della
+piramide hanno 256 canali.\footnote{La FPN originale utilizza il percorso
+\textit{top-down} con \textit{lateral connections} e produce i livelli
+$P_2$--$P_5$.}
+
+\subsection{FPN utilizzata nel progetto}
+
+Nel nostro progetto la FPN è leggermente diversa da quella originale, perché
+è stata adattata al detector utilizzato successivamente.
+
+La ResNet-50 fornisce le feature:
+
+\[
+C_3,\ C_4,\ C_5
+\]
+
+con stride rispettivamente:
+
+\[
+8,\ 16,\ 32.
+\]
+
+A differenza della FPN originale, $C_2$ non viene utilizzata. La costruzione
+del percorso top-down rimane però la stessa:
+
+\[
+C_5 \rightarrow P_5
+\]
+
+\[
+C_4 + \operatorname{Upsample}(P_5) \rightarrow P_4
+\]
+
+\[
+C_3 + \operatorname{Upsample}(P_4) \rightarrow P_3.
+\]
+
+Anche in questo caso le feature provenienti dal backbone vengono prima
+proiettate tramite convoluzioni $1\times1$ a 256 canali. Dopo la somma viene
+applicata una convoluzione $3\times3$.
+
+La differenza principale è che il nostro modello non si ferma a $P_3$, $P_4$
+e $P_5$, ma estende ulteriormente la piramide:
+
+\[
+P_5 \rightarrow P_6 \rightarrow P_7.
+\]
+
+$P_6$ viene ottenuta tramite una convoluzione $3\times3$ con stride 2 applicata
+a $P_5$, mentre $P_7$ viene ottenuta nello stesso modo partendo da $P_6$.
+
+La piramide finale è quindi:
+
+\[
+P_3,\ P_4,\ P_5,\ P_6,\ P_7
+\]
+
+con stride:
+
+\[
+8,\ 16,\ 32,\ 64,\ 128.
+\]
+
+Questa scelta segue la struttura del detector descritto nel paper sulla
+pneumonia, che utilizza cinque livelli della feature pyramid con stride
+$8$, $16$, $32$, $64$ e $128$.\footnote{Linghua Wu et al.,
+\textit{Pneumonia detection based on RSNA dataset and anchor-free deep
+learning detector}, Scientific Reports, 2024.}
+
+In sintesi, la FPN permette di avere feature a più scale, combinando
+informazioni semantiche profonde con informazioni spaziali più precise dei
+livelli superficiali. Nel nostro caso, questi livelli vengono poi utilizzati
+dal detector FCOS per effettuare le predizioni a scale differenti.
