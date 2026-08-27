@@ -20,7 +20,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.models.resnet import ResNet50
+from src.models.resnet import ResNet50, ResNet101
 
 
 # ============================================================
@@ -47,9 +47,24 @@ def parse_args():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Fine-tune Chest-Xray ResNet-50 "
+            "Train/fine-tune a Chest-Xray ResNet-50 or ResNet-101 "
             "for pneumonia classification at 512x512."
         )
+    )
+
+    # --------------------------------------------------------
+    # Architecture
+    # --------------------------------------------------------
+
+    parser.add_argument(
+        "--architecture",
+        type=int,
+        choices=[50, 101],
+        default=50,
+        help=(
+            "ResNet architecture: 50 or 101. "
+            "Default: 50."
+        ),
     )
 
     # --------------------------------------------------------
@@ -340,20 +355,46 @@ def build_dataloaders(
 
 def build_model(
     device,
+    architecture,
     weights_path=None,
 ):
     """
-    ResNet-50 with a binary classification head.
+    Build a ResNet-50 or ResNet-101 with a binary
+    classification head.
 
     classes:
         0 = NORMAL
         1 = PNEUMONIA
     """
 
-    model = ResNet50(
-        img_channels=3,
-        num_classes=2,
-    ).to(device)
+    # ---------------------------------------------------------
+    # Select architecture
+    # ---------------------------------------------------------
+
+    if architecture == 50:
+
+        model = ResNet50(
+            img_channels=3,
+            num_classes=2,
+        ).to(device)
+
+    elif architecture == 101:
+
+        model = ResNet101(
+            img_channels=3,
+            num_classes=2,
+        ).to(device)
+
+    else:
+
+        raise ValueError(
+            f"Unsupported architecture: {architecture}. "
+            "Use 50 or 101."
+        )
+
+    # ---------------------------------------------------------
+    # Optional checkpoint loading
+    # ---------------------------------------------------------
 
     if weights_path is not None:
 
@@ -412,9 +453,9 @@ def build_model(
         else:
             state_dict = checkpoint
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # Try strict loading first.
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         try:
 
@@ -433,7 +474,7 @@ def build_model(
 
             print(
                 "[WARN] Attempting to load "
-                "backbone weights only..."
+                "backbone-compatible weights only..."
             )
 
             current_state = (
@@ -441,7 +482,6 @@ def build_model(
             )
 
             compatible = {}
-
             skipped = []
 
             for key, value in (
@@ -462,7 +502,7 @@ def build_model(
                 else:
                     skipped.append(key)
 
-            missing_head = [
+            missing_parameters = [
                 key
                 for key in current_state
                 if key not in compatible
@@ -485,11 +525,9 @@ def build_model(
 
             print(
                 "[LOG] Missing parameters:"
-                f" {len(missing_head)}"
+                f" {len(missing_parameters)}"
             )
 
-            # Keep the original exception visible enough
-            # to make debugging possible.
             print(
                 "[LOG] Original strict-loading error:"
             )
@@ -939,6 +977,10 @@ def main():
     )
 
     print(
+        f"Architecture:    ResNet-{args.architecture}"
+    )
+
+    print(
         f"Image size:      {args.image_size}"
     )
 
@@ -1055,11 +1097,12 @@ def main():
 
     print()
     print(
-        "[LOG] Creating ResNet-50..."
+        f"[LOG] Creating ResNet-{args.architecture}..."
     )
 
     model = build_model(
         device=device,
+        architecture=args.architecture,
         weights_path=args.weights,
     )
 
@@ -1516,6 +1559,7 @@ def main():
     # ========================================================
 
     metadata = {
+        "architecture": args.architecture,
         "image_size": args.image_size,
         "data_dir": args.data_dir,
         "weights_initialization": args.weights,

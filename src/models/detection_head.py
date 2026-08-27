@@ -1,6 +1,5 @@
 import torch.nn as nn
 
-
 class DetectionHead(nn.Module):
     """
     Detection head applied to a single FPN level.
