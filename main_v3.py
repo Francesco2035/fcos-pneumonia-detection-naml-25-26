@@ -175,16 +175,6 @@ def parse_args():
         ),
     )
 
-    parser.add_argument(
-        "--warmup-epochs",
-        type=int,
-        default=2,
-        help=(
-            "Number of warm-up epochs used by TrainerV2. "
-            "Default: 2."
-        ),
-    )
-
     # ---------------------------------------------------------
     # Resume
     # ---------------------------------------------------------
@@ -811,12 +801,6 @@ def main():
             f"got {args.resnet_depth}"
         )
 
-    if args.warmup_epochs < 0:
-        raise ValueError(
-            f"--warmup-epochs must be >= 0, "
-            f"got {args.warmup_epochs}"
-        )
-
     # ========================================================
     # Experiment directories
     # ========================================================
@@ -946,11 +930,6 @@ def main():
     print(
         f"Freeze ResNet:       "
         f"{args.freeze_resnet} epochs"
-    )
-
-    print(
-        f"Warm-up epochs:       "
-        f"{args.warmup_epochs}"
     )
 
     print(
@@ -1473,7 +1452,7 @@ def main():
 
             base_lr=args.lr,
             backbone_lr_factor=0.1,
-            warmup_epochs=args.warmup_epochs,
+            warmup_epochs=2,
             ema_decay=0.999,
             use_ema=True,
         )
@@ -1575,5 +1554,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
