@@ -175,6 +175,44 @@ def parse_args():
         ),
     )
 
+    parser.add_argument(
+        "--warmup-epochs",
+        type=int,
+        default=2,
+        help=(
+            "Number of warm-up epochs used by TrainerV2. "
+            "Default: 2."
+        ),
+    )
+
+    parser.add_argument(
+        "--backbone-lr-factor",
+        type=float,
+        default=0.1,
+        help=(
+            "Backbone LR factor relative to the base/head LR "
+            "after unfreezing. Default: 0.1."
+        ),
+    )
+
+    parser.add_argument(
+        "--ema-decay",
+        type=float,
+        default=0.999,
+        help=(
+            "EMA decay used by TrainerV2. Default: 0.999."
+        ),
+    )
+
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=None,
+        help=(
+            "Adam weight decay. If omitted, use config.py value."
+        ),
+    )
+
     # ---------------------------------------------------------
     # Resume
     # ---------------------------------------------------------
@@ -801,6 +839,30 @@ def main():
             f"got {args.resnet_depth}"
         )
 
+    if args.warmup_epochs < 0:
+        raise ValueError(
+            f"--warmup-epochs must be >= 0, "
+            f"got {args.warmup_epochs}"
+        )
+
+    if args.backbone_lr_factor <= 0:
+        raise ValueError(
+            f"--backbone-lr-factor must be > 0, "
+            f"got {args.backbone_lr_factor}"
+        )
+
+    if not 0.0 < args.ema_decay < 1.0:
+        raise ValueError(
+            f"--ema-decay must be in (0, 1), "
+            f"got {args.ema_decay}"
+        )
+
+    if args.weight_decay is not None and args.weight_decay < 0:
+        raise ValueError(
+            f"--weight-decay must be >= 0, "
+            f"got {args.weight_decay}"
+        )
+
     # ========================================================
     # Experiment directories
     # ========================================================
@@ -930,6 +992,32 @@ def main():
     print(
         f"Freeze ResNet:       "
         f"{args.freeze_resnet} epochs"
+    )
+
+    print(
+        f"Warm-up epochs:       "
+        f"{args.warmup_epochs}"
+    )
+
+    print(
+        f"Backbone LR factor:   "
+        f"{args.backbone_lr_factor:.3f}"
+    )
+
+    print(
+        f"EMA decay:            "
+        f"{args.ema_decay:.6f}"
+    )
+
+    effective_weight_decay = (
+        WEIGHT_DECAY
+        if args.weight_decay is None
+        else args.weight_decay
+    )
+
+    print(
+        f"Weight decay:         "
+        f"{effective_weight_decay:.2e}"
     )
 
     print(
@@ -1369,11 +1457,17 @@ def main():
     # Optimizer
     # ========================================================
 
+    effective_weight_decay = (
+        WEIGHT_DECAY
+        if args.weight_decay is None
+        else args.weight_decay
+    )
+
     optimizer = (
         torch.optim.Adam(
             model.parameters(),
             lr=args.lr,
-            weight_decay=WEIGHT_DECAY,
+            weight_decay=effective_weight_decay,
         )
     )
 
@@ -1451,9 +1545,9 @@ def main():
             ),
 
             base_lr=args.lr,
-            backbone_lr_factor=0.1,
-            warmup_epochs=2,
-            ema_decay=0.999,
+            backbone_lr_factor=args.backbone_lr_factor,
+            warmup_epochs=args.warmup_epochs,
+            ema_decay=args.ema_decay,
             use_ema=True,
         )
 
