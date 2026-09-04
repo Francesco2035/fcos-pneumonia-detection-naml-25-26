@@ -554,9 +554,7 @@ visualization.
 
 Contains plotting and visualization utilities.
 
-Certo. Sostituirei interamente quella sezione con questa, includendo Hugging Face e specificando che **i modelli finali sono disponibili, mentre i checkpoint di pretraining Chest-Xray non sono distribuiti**:
 
-````markdown
 ## Checkpoints
 
 The four final detector checkpoints are available through the
