@@ -98,25 +98,31 @@ class TargetGenerator:
         location,
         stride,
     ):
+        """
+        Find all ground-truth boxes that can be assigned to a location.
+
+        A box is considered valid if the location is inside the box and
+        the box size falls within the regression range of the FPN level.
+        """
 
         matching_boxes = []
 
         for box in boxes:
 
-            # 1. location inside box
+            # Check whether the location lies inside the box.
             if not self._check_location(
                 box,
                 location,
             ):
                 continue
 
-            # 2. LTRB
+            # Compute the distances from the location to the four box sides.
             ltrb = self._calculate_ltrb(
                 box,
                 location,
             )
 
-            # 3. box inside regression range
+            # Keep the box only if its size matches this FPN level.
             if not self._check_scale(
                 stride,
                 ltrb,
@@ -127,11 +133,18 @@ class TargetGenerator:
 
         return matching_boxes
 
+
     # =========================================================
     # Select GT box when multiple boxes match
     # =========================================================
 
     def _select_box(self, matching_boxes):
+        """
+        Select a single ground-truth box when multiple boxes match.
+
+        The box with the smallest area is selected to resolve
+        overlapping ground-truth boxes.
+        """
 
         if len(matching_boxes) == 0:
             return None
@@ -143,12 +156,14 @@ class TargetGenerator:
 
             x1, y1, x2, y2 = box
 
+            # Compute the box area.
             area = (
                 (x2 - x1)
                 *
                 (y2 - y1)
             )
 
+            # Keep the smallest matching box.
             if area < min_area:
 
                 min_area = area

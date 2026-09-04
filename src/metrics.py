@@ -629,6 +629,35 @@ def _compute_ap(
     }
 
 
+def compute_ap_curve(
+    predictions,
+    targets,
+    iou_threshold=0.5,
+):
+    """
+    Compute the full precision-recall data used to obtain AP.
+
+    This is intentionally a thin public wrapper around the existing
+    ``_compute_ap`` implementation.  The training-time ``compute_metrics``
+    function is left unchanged, so this addition does not alter the
+    training/validation metric pipeline.
+
+    Returns:
+        dict with:
+            AP: scalar Average Precision.
+            precisions: precision values of the ranked predictions.
+            recalls: recall values of the ranked predictions.
+            num_gt: total ground-truth boxes.
+            num_pred: total predictions.
+    """
+
+    return _compute_ap(
+        predictions=predictions,
+        targets=targets,
+        iou_threshold=iou_threshold,
+    )
+
+
 # ============================================================
 # Box areas
 # ============================================================

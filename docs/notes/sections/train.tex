@@ -1,0 +1,583 @@
+\section{TrainerV2}
+
+\subsection{Scopo del TrainerV2}
+
+Il \texttt{TrainerV2} è una versione avanzata del trainer base del progetto.
+Non modifica l'architettura del detector, il \textit{Target Generator}, la
+funzione di loss o il processo di post-processing, ma modifica principalmente
+la strategia utilizzata per ottimizzare i pesi del modello.
+
+La classe eredita direttamente da \texttt{Trainer}:
+
+\begin{verbatim}
+class TrainerV2(Trainer):
+\end{verbatim}
+
+e riutilizza quindi la maggior parte della logica già presente nel trainer
+base, come la gestione dei dataset, la costruzione dei target, il calcolo della
+loss, il gradient clipping, la validazione, il logging e i checkpoint.
+
+Le principali modifiche introdotte da \texttt{TrainerV2} riguardano
+l'ottimizzazione:
+
+\begin{itemize}
+    \item iniziale congelamento della ResNet;
+    \item \textit{learning rate warmup};
+    \item \textit{cosine annealing};
+    \item learning rate differente per backbone e detection layers;
+    \item \textit{Exponential Moving Average} (EMA) dei pesi;
+    \item gradient clipping.
+\end{itemize}
+
+La struttura generale rimane quindi:
+
+\[
+\text{input}
+\rightarrow
+\text{model}
+\rightarrow
+\text{prediction}
+\rightarrow
+\text{target}
+\rightarrow
+\text{loss}
+\rightarrow
+\text{backpropagation}
+\rightarrow
+\text{optimizer}.
+\]
+
+Le modifiche del TrainerV2 riguardano soprattutto il modo in cui
+l'optimizer aggiorna i parametri del modello nel tempo.
+
+\subsection{Freeze e Unfreeze del Backbone}
+
+Il backbone del detector è costituito dalla ResNet-50. Nel progetto è
+possibile mantenerlo congelato per un certo numero di epoche iniziali:
+
+\[
+\text{ResNet frozen}
+\]
+
+Durante questa fase i parametri della ResNet hanno:
+
+\begin{verbatim}
+requires_grad = False
+\end{verbatim}
+
+e quindi non vengono aggiornati durante il backpropagation.
+
+Al contrario, FPN e detection heads rimangono allenabili.
+
+La logica è:
+
+\[
+\text{ResNet}
+\rightarrow
+\text{frozen}
+\]
+
+\[
+\text{FPN + Heads}
+\rightarrow
+\text{trainable}.
+\]
+
+L'idea è sfruttare inizialmente le feature già apprese dal backbone
+pretrained e concentrarsi sull'apprendimento delle parti specifiche del
+detector.
+
+Dopo il numero di epoche specificato, la ResNet viene sbloccata:
+
+\[
+\text{ResNet frozen}
+\rightarrow
+\text{ResNet trainable}.
+\]
+
+Nel progetto, quando la ResNet viene congelata, viene anche mantenuta in
+modalità evaluation:
+
+\begin{verbatim}
+self.backbone.eval()
+\end{verbatim}
+
+in modo da evitare che le statistiche interne della Batch Normalization
+cambino durante la fase di congelamento.
+
+Il congelamento del backbone viene quindi utilizzato come una forma di
+\textit{staged training}: inizialmente si adattano le parti nuove della rete e
+successivamente si permette anche al backbone di adattarsi al nuovo dominio.
+
+\subsection{Learning Rate Warmup}
+
+Il \textit{warmup} è una tecnica utilizzata per evitare di iniziare il
+training con un learning rate troppo elevato.
+
+Il learning rate determina la dimensione degli aggiornamenti applicati ai
+parametri:
+
+\[
+\theta_{t+1}
+=
+\theta_t
+-
+\eta_t
+\nabla_\theta L.
+\]
+
+Se il learning rate $\eta_t$ è troppo grande nelle prime iterazioni,
+gli aggiornamenti possono essere troppo aggressivi e rendere il training
+instabile.
+
+Nel TrainerV2 il learning rate viene quindi inizialmente impostato a un valore
+molto basso e aumentato progressivamente fino al learning rate base.
+
+Nel codice viene utilizzato un \texttt{LinearLR}, con:
+
+\[
+\text{start factor}=0.01
+\]
+
+e:
+
+\[
+\text{end factor}=1.
+\]
+
+Con un learning rate base $\eta_0$, durante il warmup il learning rate cresce
+quindi progressivamente da:
+
+\[
+0.01\eta_0
+\]
+
+fino a:
+
+\[
+\eta_0.
+\]
+
+Il processo può essere rappresentato come:
+
+\[
+\text{small LR}
+\rightarrow
+\text{progressive increase}
+\rightarrow
+\text{base LR}.
+\]
+
+Nel progetto il warmup dura due epoche per impostazione predefinita.
+
+L'obiettivo non è migliorare direttamente la capacità del modello, ma rendere
+più controllati i primi aggiornamenti dei pesi.
+
+\subsection{Cosine Annealing}
+
+Dopo il warmup, il TrainerV2 utilizza un
+\textit{Cosine Annealing Learning Rate Scheduler}.
+
+L'idea è far diminuire gradualmente il learning rate durante il training
+secondo una funzione coseno.
+
+Una formulazione semplificata è:
+
+\[
+\eta_t
+=
+\eta_{\min}
++
+\frac{1}{2}
+(\eta_{\max}-\eta_{\min})
+\left(
+1+\cos\left(
+\frac{t}{T}\pi
+\right)
+\right).
+\]
+
+Dove:
+
+\begin{itemize}
+    \item $\eta_{\max}$ è il learning rate iniziale;
+    \item $\eta_{\min}$ è il learning rate minimo;
+    \item $t$ è il punto corrente del training;
+    \item $T$ è la durata del ciclo.
+\end{itemize}
+
+All'inizio:
+
+\[
+\eta_t \approx \eta_{\max},
+\]
+
+mentre verso la fine:
+
+\[
+\eta_t \rightarrow \eta_{\min}.
+\]
+
+L'idea intuitiva è utilizzare aggiornamenti più grandi quando il modello è
+ancora lontano da una buona soluzione e ridurre progressivamente la loro
+dimensione quando il training si avvicina alla regione di convergenza.
+
+Nel TrainerV2 il warmup e il cosine annealing sono concatenati:
+
+\[
+\text{Warmup}
+\rightarrow
+\text{Cosine Annealing}.
+\]
+
+Il learning rate segue quindi inizialmente una crescita controllata e
+successivamente una decrescita graduale.
+
+\subsection{Differential Learning Rate}
+
+Quando la ResNet viene sbloccata, il TrainerV2 non utilizza necessariamente lo
+stesso learning rate per tutte le parti del modello.
+
+I parametri vengono infatti divisi in due gruppi:
+
+\[
+\text{Backbone}
+\]
+
+e
+
+\[
+\text{FPN + Detection Heads}.
+\]
+
+Nel progetto il learning rate del backbone è impostato a una frazione di quello
+utilizzato dalle parti nuove:
+
+\[
+\eta_{\text{backbone}}
+=
+0.1\eta_{\text{base}}.
+\]
+
+Quindi, con:
+
+\[
+\eta_{\text{base}}=10^{-4},
+\]
+
+si ottiene:
+
+\[
+\eta_{\text{backbone}}=10^{-5}
+\]
+
+mentre FPN e detection heads continuano a utilizzare:
+
+\[
+\eta_{\text{head}}=10^{-4}.
+\]
+
+La motivazione è che la ResNet è già pretrained e contiene feature
+general-purpose, mentre FPN e detection heads sono state introdotte per il
+problema specifico.
+
+È quindi ragionevole voler modificare il backbone più lentamente rispetto
+alle parti nuove:
+
+\[
+\text{pretrained features}
+\rightarrow
+\text{small updates}
+\]
+
+\[
+\text{new detector layers}
+\rightarrow
+\text{larger updates}.
+\]
+
+Questa strategia viene spesso indicata come \textit{differential learning
+rate}.
+
+\subsection{Exponential Moving Average}
+
+Il TrainerV2 mantiene inoltre una seconda rappresentazione dei parametri del
+modello tramite una \textit{Exponential Moving Average} (EMA).
+
+L'idea è non utilizzare esclusivamente i pesi del modello nell'ultimo
+optimization step, ma mantenere una media mobile dei pesi osservati durante il
+training.
+
+Se $\theta_t$ sono i parametri correnti e $\theta_t^{EMA}$ i parametri mediati,
+l'aggiornamento è:
+
+\[
+\theta_t^{EMA}
+=
+\alpha\theta_{t-1}^{EMA}
++
+(1-\alpha)\theta_t.
+\]
+
+Dove $\alpha$ è il fattore di decadimento.
+
+Nel progetto:
+
+\[
+\alpha=0.999.
+\]
+
+Un valore elevato significa che la EMA cambia lentamente e quindi tende a
+smussare le variazioni rapide dei parametri.
+
+In forma intuitiva:
+
+\[
+\text{EMA}
+=
+\text{versione più stabile dei pesi nel tempo}.
+\]
+
+La EMA non viene utilizzata al posto del modello durante il normale
+backpropagation. Il modello continua infatti ad essere aggiornato normalmente
+dall'optimizer.
+
+La copia EMA viene invece aggiornata dopo ogni:
+
+\[
+\text{optimizer.step()}.
+\]
+
+Durante la validazione, il TrainerV2 sostituisce temporaneamente i pesi del
+modello con quelli EMA:
+
+\[
+\text{current weights}
+\rightarrow
+\text{EMA weights}
+\rightarrow
+\text{validation}.
+\]
+
+Terminata la validazione, i pesi originali vengono ripristinati.
+
+In questo modo si può valutare il modello utilizzando una versione più
+smussata dei parametri senza alterare lo stato reale del training.
+
+\subsection{Gradient Clipping}
+
+Il TrainerV2 mantiene inoltre il \textit{gradient clipping} già presente nel
+Trainer base.
+
+Dopo il backward:
+
+\[
+L
+\rightarrow
+\nabla_\theta L
+\]
+
+viene limitata la norma complessiva dei gradienti.
+
+Nel progetto:
+
+\begin{verbatim}
+torch.nn.utils.clip_grad_norm_(
+    self.model.parameters(),
+    max_norm=1.0
+)
+\end{verbatim}
+
+La norma dei gradienti viene quindi limitata a:
+
+\[
+\|\nabla_\theta L\|\leq1.
+\]
+
+Se la norma supera il limite, i gradienti vengono ridimensionati in modo da
+rientrare nel valore massimo.
+
+Questo è particolarmente utile quando il training produce gradienti molto
+grandi, perché impedisce che un singolo aggiornamento provochi una variazione
+eccessiva dei parametri.
+
+Il gradient clipping non modifica direttamente la loss: modifica il
+\textit{gradient} utilizzato dall'optimizer per aggiornare i parametri.
+
+\subsection{Training Loop}
+
+Il ciclo di training del TrainerV2 segue una sequenza ben definita per ogni
+batch.
+
+\[
+\text{Images}
+\rightarrow
+\text{Forward}
+\rightarrow
+\text{Targets}
+\rightarrow
+\text{Loss}
+\rightarrow
+\text{Backward}
+\rightarrow
+\text{Gradient Clipping}
+\rightarrow
+\text{Optimizer Step}
+\rightarrow
+\text{EMA Update}.
+\]
+
+In dettaglio, prima le immagini vengono inviate al modello:
+
+\[
+x
+\rightarrow
+f_\theta(x).
+\]
+
+Il modello produce quindi le prediction della detection head.
+
+Successivamente il \textit{Target Generator} costruisce i target a partire
+dalle bounding box del dataset.
+
+Prediction e target vengono quindi passati alla funzione di loss:
+
+\[
+L=
+L_{\text{cls}}
++
+L_{\text{reg}}
++
+L_{\text{ctr}}.
+\]
+
+A questo punto viene eseguito il backward:
+
+\[
+L
+\rightarrow
+\nabla_\theta L.
+\]
+
+I gradienti vengono limitati tramite gradient clipping e infine
+l'optimizer aggiorna i pesi:
+
+\[
+\theta_{t+1}
+=
+\operatorname{Optimizer}
+(\theta_t,\nabla_\theta L).
+\]
+
+Se EMA è abilitata, dopo l'aggiornamento viene eseguito anche:
+
+\[
+\theta_t^{EMA}
+=
+\alpha\theta_{t-1}^{EMA}
++
+(1-\alpha)\theta_t.
+\]
+
+Questo processo viene ripetuto per tutti i batch dell'epoca.
+
+\subsection{Validation}
+
+Al termine di ogni epoca il TrainerV2 esegue la validazione.
+
+Durante questa fase:
+
+\[
+\text{model.train()}
+\rightarrow
+\text{model.eval()}.
+\]
+
+Se EMA è abilitata, i pesi EMA vengono applicati temporaneamente.
+
+La pipeline diventa:
+
+\[
+\text{Validation images}
+\rightarrow
+\text{Detector}
+\rightarrow
+\text{Post-processing}
+\rightarrow
+\text{Detections}
+\rightarrow
+\text{Metrics}.
+\]
+
+Vengono quindi calcolate le metriche del dataset, tra cui AP e AR.
+
+La metrica utilizzata come riferimento principale per selezionare il modello
+migliore è l'AP:
+
+\[
+\text{best model}
+=
+\arg\max_{\text{epoch}} AP.
+\]
+
+\subsection{Checkpoint}
+
+Il TrainerV2 salva lo stato dell'addestramento in checkpoint.
+
+Un checkpoint non contiene solamente i pesi del modello, ma può contenere
+anche:
+
+\begin{itemize}
+    \item stato dell'optimizer;
+    \item stato del learning rate scheduler;
+    \item epoca corrente;
+    \item global step;
+    \item migliore AP ottenuta;
+    \item stato della EMA.
+\end{itemize}
+
+Questo permette di interrompere e successivamente riprendere il training
+mantenendo non solo i pesi del modello, ma anche lo stato dell'ottimizzazione.
+
+Il TrainerV2 salva inoltre il modello con la migliore AP osservata e il
+checkpoint relativo all'ultimo stato del training.
+
+\subsection{Schema complessivo}
+
+Il comportamento del TrainerV2 può essere riassunto nel seguente schema:
+
+\[
+\boxed{
+\begin{array}{c}
+\text{Initialize model} \\
+\downarrow \\
+\text{Freeze ResNet} \\
+\downarrow \\
+\text{Warmup} \\
+\downarrow \\
+\text{Cosine Annealing} \\
+\downarrow \\
+\text{Unfreeze ResNet} \\
+\downarrow \\
+\text{Differential Learning Rate} \\
+\downarrow \\
+\text{Training} \\
+\downarrow \\
+\text{Gradient Clipping} \\
+\downarrow \\
+\text{Optimizer Update} \\
+\downarrow \\
+\text{EMA Update} \\
+\downarrow \\
+\text{Validation with EMA} \\
+\downarrow \\
+\text{Checkpoint}
+\end{array}
+}
+\]
+
+Nel complesso, quindi, il TrainerV2 non introduce un nuovo detector, ma una
+strategia di ottimizzazione più sofisticata rispetto al Trainer base. Le
+scelte principali sono finalizzate a rendere più controllato e stabile
+l'adattamento di un backbone pretrained alle parti del detector specifiche del
+problema.

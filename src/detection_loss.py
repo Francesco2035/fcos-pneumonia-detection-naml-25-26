@@ -133,10 +133,10 @@ class DetectionLoss(nn.Module):
         targets,
     ):
         """
-        Binary sigmoid focal loss.
+        Compute binary sigmoid focal loss over all locations.
 
-        Returns a SUM.
-        Global foreground normalization is performed later.
+        The per-location losses are summed here and normalized later
+        using the global number of positive locations.
         """
 
         targets = targets.to(
@@ -144,36 +144,37 @@ class DetectionLoss(nn.Module):
             device=logits.device,
         )
 
+        # Binary cross-entropy for each location.
         bce = F.binary_cross_entropy_with_logits(
             logits,
             targets,
             reduction="none",
         )
 
-        probabilities = torch.sigmoid(
-            logits
-        )
+        # Convert logits to probabilities.
+        probabilities = torch.sigmoid(logits)
 
+        # Probability assigned to the correct class.
         p_t = (
             probabilities * targets
-            +
-            (1.0 - probabilities)
-            * (1.0 - targets)
+            + (1.0 - probabilities) * (1.0 - targets)
         )
 
+        # Balance positive and negative examples.
         alpha_t = (
             self.alpha * targets
-            +
-            (1.0 - self.alpha)
-            * (1.0 - targets)
+            + (1.0 - self.alpha) * (1.0 - targets)
         )
 
+        # Down-weight easy examples and focus on hard ones.
         loss = (
             alpha_t
             * (1.0 - p_t).pow(self.gamma)
             * bce
         )
 
+        # Sum per-location losses.
+        # Global normalization is performed later.
         return loss.sum()
 
     # =========================================================
@@ -201,16 +202,12 @@ class DetectionLoss(nn.Module):
         dtype,
     ):
         """
-        Build one FCOS anchor per feature-map location.
+        Build a reference box for each location of an FPN feature map.
 
-        Anchor size = stride.
-
-        Anchor center:
-            ((x + 0.5) * stride,
-             (y + 0.5) * stride)
-
-        Output:
-            [H, W, 4] in XYXY format.
+        Each feature-map location is mapped to the corresponding point
+        in the original image using the FPN stride. A small box centered
+        on that point is then created as the reference required by
+        BoxLinearCoder for decoding LTRB predictions into XYXY boxes.
         """
 
         ys = torch.arange(

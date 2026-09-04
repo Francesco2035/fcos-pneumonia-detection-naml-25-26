@@ -6,34 +6,46 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR, 
 
 from src.train import Trainer
 
-
 class ModelEMA:
     """
-    Exponential Moving Average of trainable model parameters.
+    Maintains an exponential moving average of the model parameters.
 
-    The implementation mirrors the advanced training recipe used in the
-    reference engine: EMA is updated after every optimizer step and the
-    shadow weights are used during validation/checkpoint selection.
+    EMA weights are updated after each optimizer step and can be temporarily
+    used during validation or checkpoint selection.
     """
 
     def __init__(self, model, decay=0.999):
+        # Controls how strongly previous EMA weights are preserved.
         self.decay = decay
+
+        # Stores the EMA version of each trainable parameter.
         self.shadow = {}
+
+        # Temporarily stores the original model weights when EMA is applied.
         self.backup = {}
+
         self._initialize(model)
 
     def _initialize(self, model):
+        # Create the initial EMA weights from the current model parameters.
         self.shadow = {
             name: parameter.detach().clone()
             for name, parameter in model.named_parameters()
             if parameter.requires_grad
         }
+
         self.backup = {}
 
     @torch.no_grad()
     def update(self, model):
         for name, parameter in model.named_parameters():
+
             if parameter.requires_grad and name in self.shadow:
+
+                # EMA update:
+                #
+                # EMA_t = decay * EMA_(t-1)
+                #         + (1 - decay) * current_weights
                 self.shadow[name].mul_(self.decay).add_(
                     parameter.detach(),
                     alpha=1.0 - self.decay,
@@ -42,29 +54,42 @@ class ModelEMA:
     @torch.no_grad()
     def apply_shadow(self, model):
         self.backup = {}
+
         for name, parameter in model.named_parameters():
+
             if name in self.shadow:
+
+                # Save the current model weights so they can be restored later.
                 self.backup[name] = parameter.detach().clone()
+
+                # Temporarily replace the model weights with the EMA weights.
                 parameter.data.copy_(self.shadow[name])
 
     @torch.no_grad()
     def restore(self, model):
         for name, parameter in model.named_parameters():
+
             if name in self.backup:
+
+                # Restore the original training weights.
                 parameter.data.copy_(self.backup[name])
+
         self.backup.clear()
 
     def state_dict(self):
+        # Store EMA weights on CPU for checkpointing.
         return {
             name: value.detach().cpu().clone()
             for name, value in self.shadow.items()
         }
 
     def load_state_dict(self, state_dict):
+        # Restore previously saved EMA weights.
         self.shadow = {
             name: value.clone()
             for name, value in state_dict.items()
         }
+
         self.backup = {}
 
 

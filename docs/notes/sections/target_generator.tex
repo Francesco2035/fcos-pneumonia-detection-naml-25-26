@@ -1,0 +1,242 @@
+\section{Target Generator}
+
+\subsection{Scopo}
+
+Il \textit{Target Generator} è un componente utilizzato durante il training per
+trasformare le bounding box del ground truth in target compatibili con la
+formulazione FCOS.
+
+La Detection Head produce infatti una predizione per ogni posizione spaziale
+delle feature map della FPN, ma durante l'addestramento è necessario stabilire
+che cosa ogni posizione dovrebbe predire. Il Target Generator esegue proprio
+questa associazione.
+
+La pipeline può essere vista come:
+
+\[
+\text{Ground Truth}
+\rightarrow
+\text{Target Generator}
+\rightarrow
+\text{Target}
+\rightarrow
+\text{Loss}
+\]
+
+Il Target Generator non fa parte del modello neurale e viene utilizzato
+solamente durante il training. Durante l'inference il ground truth non è
+disponibile e quindi questo componente non viene utilizzato.
+
+\subsection{Target prodotti}
+
+Per ogni livello della FPN, il Target Generator produce tre target:
+
+\begin{itemize}
+    \item \texttt{positive}: indica se una location della feature map
+    corrisponde a un oggetto;
+    
+    \item \texttt{ltrb}: contiene le quattro distanze dalla location ai lati
+    della bounding box;
+    
+    \item \texttt{centerness}: indica quanto la location si trova vicino al
+    centro della bounding box.
+\end{itemize}
+
+In questo modo, per ogni location positiva, il modello deve imparare a
+predire:
+
+\[
+(l,t,r,b)
+\]
+
+e il relativo valore di \textit{centerness}.
+
+\subsection{Conversione delle location}
+
+La prima operazione consiste nel trasformare una posizione
+$(x,y)$ della feature map nelle corrispondenti coordinate dell'immagine
+originale.
+
+Per una feature map con stride $s$, il centro della location viene calcolato
+come:
+
+\[
+x_{\text{img}}=(x+0.5)s,
+\qquad
+y_{\text{img}}=(y+0.5)s.
+\]
+
+Il termine $0.5$ serve a considerare il centro della cella della feature map.
+
+Questa operazione è necessaria perché le bounding box del ground truth sono
+espresse nelle coordinate dell'immagine originale, mentre le predizioni della
+Detection Head sono associate alle location delle feature map.
+
+\subsection{Verifica della presenza della location nel box}
+
+Per ogni location viene verificato se il punto trasformato nelle coordinate
+dell'immagine cade all'interno di una bounding box.
+
+Se:
+
+\[
+x_1 \leq x \leq x_2
+\]
+
+e
+
+\[
+y_1 \leq y \leq y_2,
+\]
+
+la location è considerata appartenente al bounding box e può quindi diventare
+un candidato positivo.
+
+Se la location si trova fuori dal box, quel ground truth non può essere
+assegnato alla location.
+
+\subsection{Calcolo delle distanze LTRB}
+
+Quando una location si trova all'interno di una bounding box, vengono
+calcolate le distanze tra la location e i quattro lati del box:
+
+\[
+l=x-x_1
+\]
+
+\[
+t=y-y_1
+\]
+
+\[
+r=x_2-x
+\]
+
+\[
+b=y_2-y.
+\]
+
+Il vettore risultante è:
+
+\[
+(l,t,r,b).
+\]
+
+Questa è la rappresentazione utilizzata da FCOS per la regressione della
+bounding box: invece di predire direttamente $(x_1,y_1,x_2,y_2)$, il modello
+predice la distanza della location dai quattro lati del box.\footnote{Zhi Tian
+et al., \textit{FCOS: Fully Convolutional One-Stage Object Detection},
+ICCV 2019.}
+
+\subsection{Assegnazione in base alla scala}
+
+Non tutte le feature map sono adatte a rappresentare oggetti della stessa
+dimensione. Per questo il Target Generator utilizza un diverso
+\textit{regression range} per ogni livello della FPN.
+
+Nel progetto:
+
+\[
+\begin{array}{c|c}
+\text{Stride} & \text{Regression range} \\
+\hline
+8   & [0,64) \\
+16  & [64,128) \\
+32  & [128,256) \\
+64  & [256,512) \\
+128 & [512,\infty)
+\end{array}
+\]
+
+Per ogni location viene considerata la massima delle quattro distanze:
+
+\[
+m=\max(l,t,r,b).
+\]
+
+Il bounding box può essere assegnato a un determinato livello solo se $m$
+rientra nel range associato a quel livello.
+
+Questo meccanismo permette di distribuire gli oggetti di dimensioni diverse
+tra i diversi livelli della FPN e riduce l'ambiguità tra le feature map.
+L'uso di un diverso intervallo di regressione per ogni livello è una parte
+fondamentale della formulazione FCOS.\footnote{Zhi Tian et al.,
+\textit{FCOS: Fully Convolutional One-Stage Object Detection}, ICCV 2019.}
+
+\subsection{Gestione di più bounding box compatibili}
+
+Una location può trovarsi contemporaneamente all'interno di più bounding box.
+In questo caso può esserci ambiguità su quale oggetto debba essere utilizzato
+come target.
+
+Il progetto risolve questa situazione scegliendo il bounding box con area
+minore tra quelli compatibili.
+
+\[
+B^*=\arg\min_{B_i} \operatorname{Area}(B_i)
+\]
+
+Questa strategia segue la regola utilizzata nella formulazione FCOS per
+risolvere le location appartenenti a più ground-truth box.\footnote{Zhi Tian
+et al., \textit{FCOS: Fully Convolutional One-Stage Object Detection},
+ICCV 2019.}
+
+\subsection{Calcolo della Center-ness}
+
+Una volta scelto il bounding box, viene calcolato il target di
+\textit{centerness} a partire dalle quattro distanze LTRB:
+
+\[
+\text{centerness}
+=
+\sqrt{
+\frac{\min(l,r)}{\max(l,r)}
+\cdot
+\frac{\min(t,b)}{\max(t,b)}
+}.
+\]
+
+Una location vicina al centro del bounding box avrà un valore vicino a $1$,
+mentre una location vicina ai bordi avrà un valore più basso.
+
+Il motivo è che le location lontane dal centro tendono a produrre bounding box
+di qualità inferiore. FCOS introduce quindi la center-ness come una predizione
+separata utilizzata per ridurre il peso di queste detection durante
+l'inference.\footnote{Zhi Tian et al., \textit{FCOS: Fully Convolutional
+One-Stage Object Detection}, ICCV 2019.}
+
+\subsection{Costruzione finale dei target}
+
+Dopo aver eseguito tutte le verifiche, ogni location della feature map viene
+classificata come positiva o negativa.
+
+Per una location negativa:
+
+\[
+\texttt{positive}=0
+\]
+
+e i target di regressione e center-ness vengono impostati a zero.
+
+Per una location positiva:
+
+\[
+\texttt{positive}=1
+\]
+
+e vengono memorizzati:
+
+\[
+\texttt{ltrb}=(l,t,r,b)
+\]
+
+e
+
+\[
+\texttt{centerness}\in[0,1].
+\]
+
+Il risultato finale è quindi una struttura di target della stessa
+organizzazione spaziale della feature map, che verrà successivamente
+confrontata con le predizioni della Detection Head attraverso la funzione di
+loss.

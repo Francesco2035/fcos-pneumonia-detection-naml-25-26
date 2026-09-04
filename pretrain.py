@@ -8,6 +8,7 @@ import random
 import numpy as np
 import torch
 import torch.nn as nn
+
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
@@ -20,7 +21,10 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.models.resnet import ResNet50, ResNet101
+from src.models.resnet import (
+    ResNet50,
+    ResNet101,
+)
 
 
 # ============================================================
@@ -30,6 +34,10 @@ from src.models.resnet import ResNet50, ResNet101
 def set_seed(
     seed: int,
 ):
+    """
+    Set random seeds for reproducible training.
+    """
+
     random.seed(seed)
     np.random.seed(seed)
 
@@ -47,19 +55,22 @@ def parse_args():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Train/fine-tune a Chest-Xray ResNet-50 or ResNet-101 "
-            "for pneumonia classification at 512x512."
+            "Pretrain ResNet-50 or ResNet-101 on the "
+            "Chest-Xray pneumonia classification dataset."
         )
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Architecture
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--architecture",
         type=int,
-        choices=[50, 101],
+        choices=[
+            50,
+            101,
+        ],
         default=50,
         help=(
             "ResNet architecture: 50 or 101. "
@@ -67,9 +78,9 @@ def parse_args():
         ),
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Dataset
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--data-dir",
@@ -87,12 +98,14 @@ def parse_args():
         "--image-size",
         type=int,
         default=512,
-        help="Input image size.",
+        help=(
+            "Input image size."
+        ),
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Initialization
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--weights",
@@ -104,78 +117,101 @@ def parse_args():
         ),
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Training
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--epochs",
         type=int,
         default=10,
+        help=(
+            "Number of training epochs."
+        ),
     )
 
     parser.add_argument(
         "--batch-size",
         type=int,
         default=16,
+        help=(
+            "Training batch size."
+        ),
     )
 
     parser.add_argument(
         "--lr",
         type=float,
         default=1e-5,
+        help=(
+            "Learning rate."
+        ),
     )
 
     parser.add_argument(
         "--weight-decay",
         type=float,
         default=1e-4,
+        help=(
+            "Adam weight decay."
+        ),
     )
 
     parser.add_argument(
         "--num-workers",
         type=int,
         default=8,
+        help=(
+            "Number of DataLoader workers."
+        ),
     )
 
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
+        help=(
+            "Random seed."
+        ),
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Freezing
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--freeze-backbone-epochs",
         type=int,
         default=0,
         help=(
-            "Freeze convolutional backbone for the first "
-            "N epochs. Default: 0."
+            "Freeze convolutional backbone for the "
+            "first N epochs."
         ),
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Output
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--output-dir",
         type=str,
         default="checkpoints/pretrain",
+        help=(
+            "Output directory for checkpoints."
+        ),
     )
 
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Mixed precision
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
     parser.add_argument(
         "--amp",
         action="store_true",
-        help="Use CUDA automatic mixed precision.",
+        help=(
+            "Use CUDA automatic mixed precision."
+        ),
     )
 
     return parser.parse_args()
@@ -190,16 +226,10 @@ def build_datasets(
     image_size,
 ):
     """
-    Classification transforms.
+    Build train, validation and test datasets.
 
-    We deliberately keep these separate from the detection
-    transforms.
-
-    Training:
-        resize -> mild augmentation -> tensor -> normalize
-
-    Validation/test:
-        resize -> tensor -> normalize
+    Training uses mild augmentation.
+    Validation and test use deterministic transforms.
     """
 
     train_transform = transforms.Compose(
@@ -262,34 +292,28 @@ def build_datasets(
         ]
     )
 
-    train_dataset = (
-        datasets.ImageFolder(
-            root=os.path.join(
-                data_dir,
-                "train",
-            ),
-            transform=train_transform,
-        )
+    train_dataset = datasets.ImageFolder(
+        root=os.path.join(
+            data_dir,
+            "train",
+        ),
+        transform=train_transform,
     )
 
-    val_dataset = (
-        datasets.ImageFolder(
-            root=os.path.join(
-                data_dir,
-                "val",
-            ),
-            transform=eval_transform,
-        )
+    val_dataset = datasets.ImageFolder(
+        root=os.path.join(
+            data_dir,
+            "val",
+        ),
+        transform=eval_transform,
     )
 
-    test_dataset = (
-        datasets.ImageFolder(
-            root=os.path.join(
-                data_dir,
-                "test",
-            ),
-            transform=eval_transform,
-        )
+    test_dataset = datasets.ImageFolder(
+        root=os.path.join(
+            data_dir,
+            "test",
+        ),
+        transform=eval_transform,
     )
 
     return (
@@ -310,6 +334,9 @@ def build_dataloaders(
     batch_size,
     num_workers,
 ):
+    """
+    Build DataLoaders for train, validation and test sets.
+    """
 
     common_kwargs = {
         "num_workers": num_workers,
@@ -317,6 +344,7 @@ def build_dataloaders(
     }
 
     if num_workers > 0:
+
         common_kwargs[
             "persistent_workers"
         ] = True
@@ -362,7 +390,8 @@ def build_model(
     Build a ResNet-50 or ResNet-101 with a binary
     classification head.
 
-    classes:
+    Classes:
+
         0 = NORMAL
         1 = PNEUMONIA
     """
@@ -388,8 +417,8 @@ def build_model(
     else:
 
         raise ValueError(
-            f"Unsupported architecture: {architecture}. "
-            "Use 50 or 101."
+            f"Unsupported architecture: "
+            f"{architecture}. Use 50 or 101."
         )
 
     # ---------------------------------------------------------
@@ -401,6 +430,7 @@ def build_model(
         if not os.path.isfile(
             weights_path
         ):
+
             raise FileNotFoundError(
                 "Weights checkpoint not found:\n"
                 f"{weights_path}"
@@ -408,8 +438,7 @@ def build_model(
 
         print()
         print(
-            "[LOG] Loading pretrained "
-            "Chest-Xray weights:"
+            "[LOG] Loading existing ResNet checkpoint:"
         )
 
         print(
@@ -422,6 +451,7 @@ def build_model(
             weights_only=False,
         )
 
+        # Accept common checkpoint formats.
         if isinstance(
             checkpoint,
             dict,
@@ -431,6 +461,7 @@ def build_model(
                 "model_state_dict"
                 in checkpoint
             ):
+
                 state_dict = (
                     checkpoint[
                         "model_state_dict"
@@ -441,6 +472,7 @@ def build_model(
                 "state_dict"
                 in checkpoint
             ):
+
                 state_dict = (
                     checkpoint[
                         "state_dict"
@@ -448,13 +480,15 @@ def build_model(
                 )
 
             else:
+
                 state_dict = checkpoint
 
         else:
+
             state_dict = checkpoint
 
         # -----------------------------------------------------
-        # Try strict loading first.
+        # Try exact loading first.
         # -----------------------------------------------------
 
         try:
@@ -464,17 +498,20 @@ def build_model(
                 strict=True,
             )
 
+            print(
+                "[LOG] Full checkpoint loaded "
+                "successfully."
+            )
+
         except RuntimeError as error:
 
             print()
             print(
-                "[WARN] Strict checkpoint "
-                "loading failed."
+                "[WARN] Strict checkpoint loading failed."
             )
 
             print(
-                "[WARN] Attempting to load "
-                "backbone-compatible weights only..."
+                "[WARN] Loading only compatible parameters."
             )
 
             current_state = (
@@ -484,23 +521,26 @@ def build_model(
             compatible = {}
             skipped = []
 
-            for key, value in (
-                state_dict.items()
-            ):
+            for (
+                key,
+                value,
+            ) in state_dict.items():
 
                 if (
                     key in current_state
                     and
                     current_state[
                         key
-                    ].shape
-                    ==
-                    value.shape
+                    ].shape == value.shape
                 ):
+
                     compatible[key] = value
 
                 else:
-                    skipped.append(key)
+
+                    skipped.append(
+                        key
+                    )
 
             missing_parameters = [
                 key
@@ -514,22 +554,22 @@ def build_model(
             )
 
             print(
-                "[LOG] Compatible weights loaded:"
-                f" {len(compatible)}"
+                "[LOG] Compatible parameters loaded: "
+                f"{len(compatible)}"
             )
 
             print(
-                "[LOG] Skipped weights:"
-                f" {len(skipped)}"
+                "[LOG] Skipped parameters: "
+                f"{len(skipped)}"
             )
 
             print(
-                "[LOG] Missing parameters:"
-                f" {len(missing_parameters)}"
+                "[LOG] Missing parameters: "
+                f"{len(missing_parameters)}"
             )
 
             print(
-                "[LOG] Original strict-loading error:"
+                "[LOG] Original loading error:"
             )
 
             print(
@@ -550,31 +590,43 @@ def set_backbone_trainable(
     trainable,
 ):
     """
-    Freeze/unfreeze all convolutional ResNet layers.
+    Freeze or unfreeze the convolutional ResNet backbone.
 
     The final fully-connected classification head remains
     trainable.
     """
 
+    # Initial convolution.
     for parameter in (
         model.conv1.parameters()
     ):
+
         parameter.requires_grad = (
             trainable
         )
 
+    # ResNet residual stages.
     for layer in (
         model.layer1,
         model.layer2,
         model.layer3,
         model.layer4,
     ):
+
         for parameter in (
             layer.parameters()
         ):
+
             parameter.requires_grad = (
                 trainable
             )
+
+    # Classification head remains trainable.
+    for parameter in (
+        model.fc.parameters()
+    ):
+
+        parameter.requires_grad = True
 
 
 # ============================================================
@@ -590,6 +642,10 @@ def train_one_epoch(
     scaler,
     amp_enabled,
 ):
+    """
+    Train the classification model for one epoch.
+    """
+
     model.train()
 
     running_loss = 0.0
@@ -597,7 +653,10 @@ def train_one_epoch(
     all_targets = []
     all_predictions = []
 
-    for images, targets in loader:
+    for (
+        images,
+        targets,
+    ) in loader:
 
         images = images.to(
             device,
@@ -656,8 +715,7 @@ def train_one_epoch(
 
         running_loss += (
             loss.item()
-            *
-            images.size(0)
+            * images.size(0)
         )
 
         predictions = (
@@ -709,11 +767,21 @@ def train_one_epoch(
     )
 
     return {
-        "loss": float(epoch_loss),
-        "accuracy": float(accuracy),
-        "precision": float(precision),
-        "recall": float(recall),
-        "f1": float(f1),
+        "loss": float(
+            epoch_loss
+        ),
+        "accuracy": float(
+            accuracy
+        ),
+        "precision": float(
+            precision
+        ),
+        "recall": float(
+            recall
+        ),
+        "f1": float(
+            f1
+        ),
     }
 
 
@@ -728,6 +796,10 @@ def evaluate(
     criterion,
     device,
 ):
+    """
+    Evaluate the classification model on a dataset.
+    """
+
     model.eval()
 
     running_loss = 0.0
@@ -736,7 +808,10 @@ def evaluate(
     all_predictions = []
     all_probabilities = []
 
-    for images, targets in loader:
+    for (
+        images,
+        targets,
+    ) in loader:
 
         images = images.to(
             device,
@@ -759,8 +834,7 @@ def evaluate(
 
         running_loss += (
             loss.item()
-            *
-            images.size(0)
+            * images.size(0)
         )
 
         probabilities = torch.softmax(
@@ -787,9 +861,11 @@ def evaluate(
             .tolist()
         )
 
+        # Probability of the PNEUMONIA class.
         all_probabilities.extend(
             probabilities[
-                :, 1
+                :,
+                1,
             ]
             .cpu()
             .tolist()
@@ -832,10 +908,21 @@ def evaluate(
         ],
     )
 
-    tn = int(cm[0, 0])
-    fp = int(cm[0, 1])
-    fn = int(cm[1, 0])
-    tp = int(cm[1, 1])
+    tn = int(
+        cm[0, 0]
+    )
+
+    fp = int(
+        cm[0, 1]
+    )
+
+    fn = int(
+        cm[1, 0]
+    )
+
+    tp = int(
+        cm[1, 1]
+    )
 
     specificity = (
         tn / (tn + fp)
@@ -855,15 +942,27 @@ def evaluate(
         auc = 0.0
 
     return {
-        "loss": float(loss),
-        "accuracy": float(accuracy),
-        "precision": float(precision),
-        "recall": float(recall),
+        "loss": float(
+            loss
+        ),
+        "accuracy": float(
+            accuracy
+        ),
+        "precision": float(
+            precision
+        ),
+        "recall": float(
+            recall
+        ),
         "specificity": float(
             specificity
         ),
-        "f1": float(f1),
-        "auc": float(auc),
+        "f1": float(
+            f1
+        ),
+        "auc": float(
+            auc
+        ),
         "tn": tn,
         "fp": fp,
         "fn": fn,
@@ -884,20 +983,29 @@ def save_checkpoint(
     best_metric,
     history,
 ):
+    """
+    Save the current pretraining state.
+    """
+
     checkpoint = {
         "epoch": epoch,
+
         "model_state_dict": (
             model.state_dict()
         ),
+
         "optimizer_state_dict": (
             optimizer.state_dict()
         ),
+
         "scheduler_state_dict": (
             scheduler.state_dict()
             if scheduler is not None
             else None
         ),
+
         "best_metric": best_metric,
+
         "history": history,
     }
 
@@ -908,20 +1016,31 @@ def save_checkpoint(
 
 
 # ============================================================
-# Main
+# Pretraining
 # ============================================================
 
-def main():
+def run_pretraining(
+    args,
+):
+    """
+    Run the complete Chest-Xray ResNet pretraining workflow.
 
-    args = parse_args()
+    This function can be called from the project main.py,
+    while the standalone main() below keeps pretrain.py
+    executable on its own.
+    """
+
+    # ---------------------------------------------------------
+    # Reproducibility
+    # ---------------------------------------------------------
 
     set_seed(
         args.seed
     )
 
-    # ========================================================
-    # Directories
-    # ========================================================
+    # ---------------------------------------------------------
+    # Output directory
+    # ---------------------------------------------------------
 
     os.makedirs(
         args.output_dir,
@@ -943,9 +1062,9 @@ def main():
         "history.json",
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Device
-    # ========================================================
+    # ---------------------------------------------------------
 
     device = torch.device(
         "cuda"
@@ -955,9 +1074,12 @@ def main():
 
     amp_enabled = (
         args.amp
-        and
-        device.type == "cuda"
+        and device.type == "cuda"
     )
+
+    # ---------------------------------------------------------
+    # Configuration summary
+    # ---------------------------------------------------------
 
     print()
     print(
@@ -965,7 +1087,7 @@ def main():
     )
 
     print(
-        "CHEST-XRAY RESNET-50 PRETRAINING"
+        "CHEST-XRAY RESNET PRETRAINING"
     )
 
     print(
@@ -973,49 +1095,65 @@ def main():
     )
 
     print(
-        f"Data:            {args.data_dir}"
+        f"Architecture:    "
+        f"ResNet-{args.architecture}"
     )
 
     print(
-        f"Architecture:    ResNet-{args.architecture}"
+        f"Data:            "
+        f"{args.data_dir}"
     )
 
     print(
-        f"Image size:      {args.image_size}"
+        f"Image size:      "
+        f"{args.image_size}"
     )
 
     print(
-        f"Batch size:      {args.batch_size}"
+        f"Batch size:      "
+        f"{args.batch_size}"
     )
 
     print(
-        f"Epochs:           {args.epochs}"
+        f"Epochs:          "
+        f"{args.epochs}"
     )
 
     print(
-        f"Learning rate:   {args.lr:.2e}"
+        f"Learning rate:   "
+        f"{args.lr:.2e}"
     )
 
     print(
-        f"Weight decay:    {args.weight_decay:.2e}"
+        f"Weight decay:    "
+        f"{args.weight_decay:.2e}"
     )
 
     print(
-        f"Workers:         {args.num_workers}"
+        f"Workers:         "
+        f"{args.num_workers}"
     )
 
     print(
-        f"Device:          {device}"
+        f"Device:          "
+        f"{device}"
     )
 
     print(
-        f"AMP:             {amp_enabled}"
+        f"AMP:             "
+        f"{amp_enabled}"
+    )
+
+    print(
+        f"Freeze epochs:   "
+        f"{args.freeze_backbone_epochs}"
     )
 
     if args.weights is not None:
 
         print(
-            f"Initial weights: {args.weights}"
+            f"Initial weights: "
+            f"{args.weights}"
         )
 
     else:
@@ -1025,16 +1163,17 @@ def main():
         )
 
     print(
-        f"Output:          {args.output_dir}"
+        f"Output:          "
+        f"{args.output_dir}"
     )
 
     print(
         "=" * 75
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Dataset
-    # ========================================================
+    # ---------------------------------------------------------
 
     print()
     print(
@@ -1075,9 +1214,9 @@ def main():
         f"{train_dataset.class_to_idx}"
     )
 
-    # ========================================================
-    # Data loaders
-    # ========================================================
+    # ---------------------------------------------------------
+    # DataLoaders
+    # ---------------------------------------------------------
 
     (
         train_loader,
@@ -1091,9 +1230,9 @@ def main():
         num_workers=args.num_workers,
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Model
-    # ========================================================
+    # ---------------------------------------------------------
 
     print()
     print(
@@ -1106,9 +1245,9 @@ def main():
         weights_path=args.weights,
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Freeze configuration
-    # ========================================================
+    # ---------------------------------------------------------
 
     if (
         args.freeze_backbone_epochs
@@ -1132,22 +1271,17 @@ def main():
             trainable=True,
         )
 
-    # Classification head is always trainable.
-
-    for parameter in (
-        model.fc.parameters()
-    ):
-        parameter.requires_grad = True
-
-    # ========================================================
+    # ---------------------------------------------------------
     # Loss
-    # ========================================================
+    # ---------------------------------------------------------
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = (
+        nn.CrossEntropyLoss()
+    )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Optimizer
-    # ========================================================
+    # ---------------------------------------------------------
 
     optimizer = torch.optim.Adam(
         filter(
@@ -1159,9 +1293,9 @@ def main():
         weight_decay=args.weight_decay,
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Scheduler
-    # ========================================================
+    # ---------------------------------------------------------
 
     scheduler = (
         torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -1171,18 +1305,18 @@ def main():
         )
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # AMP
-    # ========================================================
+    # ---------------------------------------------------------
 
     scaler = torch.amp.GradScaler(
         "cuda",
         enabled=amp_enabled,
     )
 
-    # ========================================================
+    # ---------------------------------------------------------
     # Training state
-    # ========================================================
+    # ---------------------------------------------------------
 
     history = []
 
@@ -1190,18 +1324,18 @@ def main():
         "inf"
     )
 
-    # ========================================================
-    # Training
-    # ========================================================
+    # ---------------------------------------------------------
+    # Training loop
+    # ---------------------------------------------------------
 
     for epoch in range(
         1,
         args.epochs + 1,
     ):
 
-        # ----------------------------------------------------
-        # Unfreeze
-        # ----------------------------------------------------
+        # -----------------------------------------------------
+        # Unfreeze backbone
+        # -----------------------------------------------------
 
         if (
             args.freeze_backbone_epochs
@@ -1221,17 +1355,12 @@ def main():
                 trainable=True,
             )
 
-            # Rebuild optimizer so that all parameters
-            # now receive updates.
-
+            # Rebuild optimizer so all parameters
+            # are now updated.
             optimizer = torch.optim.Adam(
                 model.parameters(),
-                lr=(
-                    args.lr * 0.5
-                ),
-                weight_decay=(
-                    args.weight_decay
-                ),
+                lr=args.lr * 0.5,
+                weight_decay=args.weight_decay,
             )
 
             scheduler = (
@@ -1241,18 +1370,18 @@ def main():
                         args.epochs
                         - args.freeze_backbone_epochs
                     ),
-                    eta_min=(
-                        args.lr * 0.005
-                    ),
+                    eta_min=args.lr * 0.005,
                 )
             )
 
-        # ----------------------------------------------------
-        # Current LR
-        # ----------------------------------------------------
+        # -----------------------------------------------------
+        # Current learning rate
+        # -----------------------------------------------------
 
         current_lr = (
-            optimizer.param_groups[0]["lr"]
+            optimizer
+            .param_groups[0]
+            ["lr"]
         )
 
         print()
@@ -1273,9 +1402,9 @@ def main():
             "=" * 75
         )
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # Train
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         train_metrics = (
             train_one_epoch(
@@ -1289,9 +1418,9 @@ def main():
             )
         )
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # Validation
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         val_metrics = (
             evaluate(
@@ -1302,15 +1431,15 @@ def main():
             )
         )
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # Scheduler
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         scheduler.step()
 
-        # ----------------------------------------------------
-        # Print
-        # ----------------------------------------------------
+        # -----------------------------------------------------
+        # Print training metrics
+        # -----------------------------------------------------
 
         print(
             "[TRAIN]"
@@ -1341,6 +1470,10 @@ def main():
             f"{train_metrics['f1']:.6f}"
         )
 
+        # -----------------------------------------------------
+        # Print validation metrics
+        # -----------------------------------------------------
+
         print(
             "[VAL]"
         )
@@ -1366,17 +1499,17 @@ def main():
         )
 
         print(
-            f"  specificity:"
+            f"  specificity: "
             f"{val_metrics['specificity']:.6f}"
         )
 
         print(
-            f"  F1:         "
+            f"  F1:          "
             f"{val_metrics['f1']:.6f}"
         )
 
         print(
-            f"  AUC:        "
+            f"  AUC:         "
             f"{val_metrics['auc']:.6f}"
         )
 
@@ -1387,9 +1520,9 @@ def main():
             f"FN={val_metrics['fn']}"
         )
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # History
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         epoch_record = {
             "epoch": epoch,
@@ -1402,9 +1535,9 @@ def main():
             epoch_record
         )
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # Last checkpoint
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         save_checkpoint(
             path=last_path,
@@ -1416,13 +1549,9 @@ def main():
             history=history,
         )
 
-        # ----------------------------------------------------
+        # -----------------------------------------------------
         # Best checkpoint
-        #
-        # F1 is the selection metric because the dataset is
-        # imbalanced and we want a balance between precision
-        # and recall.
-        # ----------------------------------------------------
+        # -----------------------------------------------------
 
         selection_metric = (
             val_metrics["f1"]
@@ -1479,7 +1608,7 @@ def main():
         )
 
     # ========================================================
-    # Load best checkpoint for test
+    # Final test evaluation
     # ========================================================
 
     print()
@@ -1520,65 +1649,108 @@ def main():
     )
 
     print(
-        f"Test loss:       "
+        f"Test loss:        "
         f"{test_metrics['loss']:.6f}"
     )
 
     print(
-        f"Test accuracy:   "
+        f"Test accuracy:    "
         f"{test_metrics['accuracy']:.6f}"
     )
 
     print(
-        f"Test precision:  "
+        f"Test precision:   "
         f"{test_metrics['precision']:.6f}"
     )
 
     print(
-        f"Test recall:     "
+        f"Test recall:      "
         f"{test_metrics['recall']:.6f}"
     )
 
     print(
-        f"Test specificity:"
+        f"Test specificity: "
         f"{test_metrics['specificity']:.6f}"
     )
 
     print(
-        f"Test F1:         "
+        f"Test F1:          "
         f"{test_metrics['f1']:.6f}"
     )
 
     print(
-        f"Test AUC:        "
+        f"Test AUC:         "
         f"{test_metrics['auc']:.6f}"
     )
 
     # ========================================================
-    # Save final metadata
+    # Metadata
     # ========================================================
 
     metadata = {
-        "architecture": args.architecture,
-        "image_size": args.image_size,
-        "data_dir": args.data_dir,
-        "weights_initialization": args.weights,
-        "epochs": args.epochs,
-        "batch_size": args.batch_size,
-        "learning_rate": args.lr,
-        "weight_decay": args.weight_decay,
-        "num_workers": args.num_workers,
-        "seed": args.seed,
+        "architecture": (
+            args.architecture
+        ),
+
+        "image_size": (
+            args.image_size
+        ),
+
+        "data_dir": (
+            args.data_dir
+        ),
+
+        "weights_initialization": (
+            args.weights
+        ),
+
+        "epochs": (
+            args.epochs
+        ),
+
+        "batch_size": (
+            args.batch_size
+        ),
+
+        "learning_rate": (
+            args.lr
+        ),
+
+        "weight_decay": (
+            args.weight_decay
+        ),
+
+        "num_workers": (
+            args.num_workers
+        ),
+
+        "seed": (
+            args.seed
+        ),
+
         "freeze_backbone_epochs": (
             args.freeze_backbone_epochs
         ),
-        "best_validation_f1": best_metric,
-        "test_metrics": test_metrics,
+
+        "best_validation_f1": (
+            best_metric
+        ),
+
+        "test_metrics": (
+            test_metrics
+        ),
+
         "class_to_idx": (
             train_dataset.class_to_idx
         ),
-        "best_checkpoint": best_path,
-        "last_checkpoint": last_path,
+
+        "best_checkpoint": (
+            best_path
+        ),
+
+        "last_checkpoint": (
+            last_path
+        ),
     }
 
     metadata_path = os.path.join(
@@ -1597,6 +1769,10 @@ def main():
             indent=2,
         )
 
+    # ========================================================
+    # Completion
+    # ========================================================
+
     print()
     print(
         "=" * 75
@@ -1611,6 +1787,11 @@ def main():
     )
 
     print(
+        f"Architecture:    "
+        f"ResNet-{args.architecture}"
+    )
+
+    print(
         f"Best checkpoint: "
         f"{best_path}"
     )
@@ -1621,17 +1802,30 @@ def main():
     )
 
     print(
-        f"History: "
+        f"History:         "
         f"{history_path}"
     )
 
     print(
-        f"Metadata: "
+        f"Metadata:        "
         f"{metadata_path}"
     )
 
     print(
         "=" * 75
+    )
+
+
+# ============================================================
+# Standalone entry point
+# ============================================================
+
+def main():
+
+    args = parse_args()
+
+    run_pretraining(
+        args
     )
 
 

@@ -1,0 +1,483 @@
+\section{Loss Function}
+
+Durante il training, la \textit{Detection Head} produce tre tipi di
+predizioni:
+
+\[
+\text{classification},\qquad
+(l,t,r,b),\qquad
+\text{centerness}.
+\]
+
+Il \textit{Target Generator} produce gli stessi tipi di target a partire dalle
+bounding box del ground truth. La funzione di loss misura quindi quanto le
+predizioni della rete differiscono dai target.
+
+Nel progetto la loss totale è definita come combinazione di tre componenti:
+
+\[
+L_{\text{total}}
+=
+\lambda_{\text{cls}}L_{\text{cls}}
++
+\lambda_{\text{reg}}L_{\text{reg}}
++
+\lambda_{\text{ctr}}L_{\text{ctr}}.
+\]
+
+Nel caso attuale tutti i pesi sono impostati a $1$, quindi le tre componenti
+contribuiscono in ugual misura alla loss totale.
+
+\subsection{Classification Loss: Focal Loss}
+
+La classification branch deve determinare, per ogni location della feature
+map, se è presente un oggetto oppure se la location appartiene al background.
+Nel nostro caso è presente una sola classe, quindi il target è binario:
+
+\[
+y =
+\begin{cases}
+1 & \text{location positiva}\\
+0 & \text{background}.
+\end{cases}
+\]
+
+Per questo motivo viene utilizzata una \textit{sigmoid focal loss}.
+
+La Focal Loss è stata introdotta da Lin et al. per affrontare il forte
+sbilanciamento tra esempi positivi e negativi tipico dei \textit{dense
+detectors}.\footnote{Tsung-Yi Lin et al., \textit{Focal Loss for Dense Object
+Detection}, ICCV 2017.}
+
+La prima parte è la Binary Cross Entropy:
+
+\[
+BCE(p,y)
+=
+-\left[
+y\log(p)
++
+(1-y)\log(1-p)
+\right],
+\]
+
+dove $p$ è la probabilità predetta dalla rete.
+
+La Focal Loss introduce poi un fattore che riduce il contributo degli esempi
+facili:
+
+\[
+FL(p_t)
+=
+-\alpha_t(1-p_t)^\gamma\log(p_t).
+\]
+
+Dove $p_t$ rappresenta la probabilità assegnata alla classe corretta:
+
+\[
+p_t=
+\begin{cases}
+p & \text{se } y=1\\
+1-p & \text{se } y=0.
+\end{cases}
+\]
+
+Il termine
+
+\[
+(1-p_t)^\gamma
+\]
+
+è il termine fondamentale della Focal Loss. Se un esempio è classificato
+correttamente con alta confidenza, allora $p_t$ è vicino a $1$ e il termine
+diventa molto piccolo. In questo modo gli esempi facili contribuiscono poco alla
+loss, mentre gli esempi difficili ricevono un peso maggiore.
+
+Il parametro $\alpha_t$ permette invece di bilanciare il contributo delle
+classi positive e negative.
+
+Nel progetto vengono utilizzati:
+
+\[
+\alpha=0.25,\qquad\gamma=2.
+\]
+
+La Focal Loss viene utilizzata sulla classification branch per tutte le
+location della feature map.
+
+\subsection{Regression Loss: Generalized IoU}
+
+La regression branch ha il compito di localizzare la bounding box. Per ogni
+location positiva il modello predice:
+
+\[
+(l,t,r,b),
+\]
+
+ovvero le distanze della location dai quattro lati della bounding box.
+
+Nel progetto la predizione viene prima trasformata in una bounding box
+$XYXY$ e successivamente confrontata con la bounding box ground truth tramite
+la \textit{Generalized Intersection over Union} (GIoU).
+
+La IoU tra due bounding box $A$ e $B$ è:
+
+\[
+IoU =
+\frac{|A\cap B|}
+{|A\cup B|}.
+\]
+
+Il valore è compreso tra $0$ e $1$ e misura quanto le due bounding box
+si sovrappongono.
+
+La sola IoU presenta però un problema quando le bounding box non si
+sovrappongono: in quel caso la IoU è $0$ e non fornisce informazioni sulla
+distanza tra i due box.
+
+La Generalized IoU introduce quindi il più piccolo bounding box $C$ che
+contiene entrambe le box:
+
+\[
+GIoU =
+IoU -
+\frac{|C\setminus(A\cup B)|}
+{|C|}.
+\]
+
+Il secondo termine penalizza le situazioni in cui le due bounding box sono
+lontane tra loro.
+
+La loss utilizzata è:
+
+\[
+L_{\text{GIoU}}=1-GIoU.
+\]
+
+Di conseguenza, quando la box predetta coincide con il ground truth:
+
+\[
+GIoU\rightarrow1
+\qquad\Rightarrow\qquad
+L_{\text{GIoU}}\rightarrow0.
+\]
+
+Nel nostro codice la regression loss viene calcolata solo sulle location
+positive.
+
+È importante notare che il modello non confronta direttamente i quattro valori
+$LTRB$ con una loss L1. La procedura è:
+
+\[
+\text{LTRB prediction}
+\rightarrow
+\text{decode}
+\rightarrow
+\text{XYXY prediction}
+\rightarrow
+\text{GIoU loss}.
+\]
+
+Questa scelta differisce dal paper sulla pneumonia, che utilizza una
+\textit{Smooth L1 loss} per la regressione.\footnote{Linghua Wu et al.,
+\textit{Pneumonia detection based on RSNA dataset and anchor-free deep learning
+detector}, Scientific Reports, 2024.}
+
+\subsection{Centerness Loss}
+
+La \textit{centerness branch} deve imparare quanto una location sia vicina al
+centro della bounding box associata.
+
+Il Target Generator calcola il target di centerness come:
+
+\[
+c^*
+=
+\sqrt{
+\frac{\min(l,r)}{\max(l,r)}
+\cdot
+\frac{\min(t,b)}{\max(t,b)}
+}.
+\]
+
+Il rapporto
+
+\[
+\frac{\min(l,r)}{\max(l,r)}
+\]
+
+misura quanto la location sia centrata orizzontalmente, mentre
+
+\[
+\frac{\min(t,b)}{\max(t,b)}
+\]
+
+misura quanto sia centrata verticalmente.
+
+La radice quadrata combina i due valori.
+
+Una location esattamente al centro del box tende ad avere:
+
+\[
+c^*\approx1,
+\]
+
+mentre una location molto vicina a uno dei bordi tende ad avere:
+
+\[
+c^*\approx0.
+\]
+
+Questo target viene utilizzato per insegnare alla centerness branch a
+distinguere le location che producono box di buona qualità da quelle lontane
+dal centro.
+
+Nel progetto la centerness prediction viene confrontata con il target tramite
+la stessa \textit{sigmoid focal loss} utilizzata per la classificazione:
+
+\[
+L_{\text{ctr}}
+=
+-\alpha_t(1-p_t)^\gamma\log(p_t).
+\]
+
+La loss di centerness viene però calcolata solamente sulle location positive.
+
+\subsection{Normalizzazione della Loss}
+
+Le tre componenti vengono inizialmente sommate su tutte le immagini e tutti i
+livelli della FPN.
+
+Successivamente la loss viene normalizzata rispetto al numero totale di
+location positive:
+
+\[
+N_{\text{pos}}
+=
+\sum_{\text{images}}
+\sum_{\text{levels}}
+\#\{\text{positive locations}\}.
+\]
+
+La loss finale diventa quindi:
+
+\[
+L_{\text{total}}
+=
+\frac{
+\lambda_{\text{cls}}L_{\text{cls}}
++
+\lambda_{\text{reg}}L_{\text{reg}}
++
+\lambda_{\text{ctr}}L_{\text{ctr}}
+}
+{\max(1,N_{\text{pos}})}.
+\]
+
+La normalizzazione impedisce che la scala della loss dipenda semplicemente dal
+numero di location positive presenti nel batch.
+
+\subsection{Confronto con i paper}
+
+La loss del progetto combina idee provenienti principalmente dalla famiglia
+FCOS e dalla Focal Loss, ma non coincide esattamente con la formulazione di uno
+dei due paper di riferimento.
+
+\subsubsection{Paper sulla pneumonia}
+
+Il paper sulla pneumonia utilizza due componenti principali:
+
+\[
+L =
+L_{\text{center}}
++
+L_{\text{scale}}.
+\]
+
+Il CENTER viene addestrato tramite Focal Loss, mentre la previsione della scala
+viene addestrata tramite Smooth L1.\footnote{Linghua Wu et al.,
+\textit{Pneumonia detection based on RSNA dataset and anchor-free deep learning
+detector}, Scientific Reports, 2024.}
+
+La formulazione è quindi:
+
+\[
+\text{CENTER}
+\rightarrow
+\text{Focal Loss}
+\]
+
+\[
+\text{SCALE}
+\rightarrow
+\text{Smooth L1}.
+\]
+
+\subsubsection{FCOS}
+
+FCOS utilizza invece una formulazione basata su tre predizioni:
+
+\[
+\text{classification},
+\qquad
+\text{regression},
+\qquad
+\text{centerness}.
+\]
+
+La classification branch utilizza Focal Loss, la regressione utilizza una
+loss basata sulla IoU e la centerness utilizza una Binary Cross Entropy.
+Inoltre, la center-ness viene introdotta specificamente per ridurre il
+contributo delle prediction generate da location lontane dal centro degli
+oggetti.\footnote{Zhi Tian et al., \textit{FCOS: Fully Convolutional One-Stage
+Object Detection}, ICCV 2019.}
+
+\subsubsection{Progetto}
+
+Il progetto è quindi concettualmente più vicino a FCOS:
+
+\[
+\boxed{
+\text{Classification}
++
+\text{LTRB Regression}
++
+\text{Centerness}
+}
+\]
+
+ma presenta alcune modifiche:
+
+\[
+\text{Classification}
+\rightarrow
+\text{Focal Loss}
+\]
+
+\[
+\text{Regression}
+\rightarrow
+\text{GIoU Loss}
+\]
+
+\[
+\text{Centerness}
+\rightarrow
+\text{Focal Loss}.
+\]
+
+La differenza più evidente rispetto a FCOS è quindi la loss della
+centerness: FCOS utilizza Binary Cross Entropy, mentre nel progetto viene
+utilizzata la Focal Loss.
+
+Rispetto al paper sulla pneumonia, invece, la differenza è maggiore, perché il
+progetto mantiene una classification branch esplicita, utilizza la
+regressione $LTRB$ tipica della formulazione FCOS e sostituisce la Smooth L1
+con la GIoU loss.
+
+Nel complesso, la loss implementata nel progetto può quindi essere considerata
+una formulazione \textit{FCOS-like}, adattata alle esigenze specifiche del
+progetto.
+
+
+\subsubsection{Scelta di una formulazione FCOS-like}
+
+Sebbene il progetto sia nato con l'obiettivo di riprodurre il detector descritto
+nel paper sulla pneumonia, durante l'implementazione alcune difficoltà di
+ottimizzazione hanno motivato l'adozione di una formulazione più vicina a FCOS.
+
+In particolare, nelle prime versioni del modello il training risultava
+instabile, con episodi di gradient explosion. Anche una formulazione più vicina
+a FCOS mostrava inizialmente problemi di stabilità. L'analisi delle
+architetture e delle tecniche utilizzate nei detector ha portato all'impiego
+della \textit{Group Normalization} nelle detection heads. Questa scelta è
+coerente con il paper FCOS, che utilizza Group Normalization nelle convolutional
+layers delle heads proprio per rendere il training più stabile.\footnote{Zhi
+Tian et al., \textit{FCOS: Fully Convolutional One-Stage Object Detection},
+ICCV 2019.}
+
+La formulazione finale del progetto è quindi maggiormente vicina a FCOS rispetto
+al detector descritto nel paper sulla pneumonia. Vengono infatti mantenuti
+diversi elementi caratteristici di FCOS: la predizione per location, la
+regressione $LTRB$, la classification branch, la center-ness branch, i
+regression ranges associati ai livelli della FPN e la struttura $P_3$--$P_7$.
+
+Il progetto non costituisce tuttavia una riproduzione esatta di FCOS. La
+detection head è più semplice, poiché utilizza una sola convoluzione $3\times3$
+per ciascuna tower invece delle quattro convoluzioni previste dalla
+formulazione originale. Inoltre, le detection heads non condividono i parametri
+tra i diversi livelli della FPN.
+
+Anche le funzioni di loss presentano alcune differenze. La regressione utilizza
+la Generalized IoU loss, coerente con una delle successive migliorie introdotte
+nel lavoro FCOS, mentre la center-ness viene addestrata tramite Focal Loss
+anziché Binary Cross Entropy.
+
+Il modello può quindi essere considerato una variante semplificata e adattata
+al problema di pneumonia detection di un detector \textit{FCOS-like}.
+
+
+\subsubsection{Feature-map Locations and Reference Boxes}
+
+In FCOS, ogni posizione spaziale della feature map rappresenta una
+\textit{location} sulla quale il modello può effettuare una predizione. La
+location viene riportata nelle coordinate dell'immagine originale utilizzando
+lo stride del livello della FPN:
+
+\[
+x_{\text{img}}=(x+0.5)s,
+\qquad
+y_{\text{img}}=(y+0.5)s,
+\]
+
+dove $(x,y)$ è la posizione sulla feature map e $s$ è lo stride del livello.
+
+Ad esempio, una location di $P_3$ con stride $8$ corrisponde ad un punto
+dell'immagine originale distante $8$ pixel dalla location adiacente. In
+termini intuitivi, una singola location può quindi essere associata ad una
+cella di circa $8\times8$ pixel nell'immagine originale, anche se la feature
+in quella posizione può contenere informazioni provenienti da una regione
+molto più ampia a causa del \textit{receptive field} della rete.
+
+Nel FCOS originale la location viene concettualmente trattata come un punto
+rispetto al quale vengono predette direttamente le quattro distanze
+\[
+(l,t,r,b).
+\]
+
+Nel nostro progetto, invece, per eseguire il decoding viene utilizzato il
+\texttt{BoxLinearCoder} di \texttt{torchvision}. Questo componente utilizza un
+\textit{reference box} anziché un semplice punto. Per questo motivo, a partire
+dalla location nell'immagine viene costruito un piccolo box centrato sulla
+location e con dimensione pari allo stride:
+
+\[
+B_{\text{ref}} =
+\left[
+x-\frac{s}{2},
+y-\frac{s}{2},
+x+\frac{s}{2},
+y+\frac{s}{2}
+\right].
+\]
+
+Il reference box non rappresenta un'ipotesi sulla dimensione dell'oggetto e
+non costituisce un anchor box nel senso tradizionale dei detector
+anchor-based. È solamente una rappresentazione della location utilizzata come
+riferimento dal \texttt{BoxLinearCoder}.
+
+La pipeline di decoding diventa quindi:
+
+\[
+\text{feature-map location}
+\rightarrow
+\text{image coordinates}
+\rightarrow
+\text{reference box}
+\rightarrow
+\text{LTRB prediction}
+\rightarrow
+\text{BoxLinearCoder}
+\rightarrow
+\text{XYXY box}.
+\]

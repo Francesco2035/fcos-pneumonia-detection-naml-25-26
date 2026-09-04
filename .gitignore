@@ -6,5 +6,5 @@ data/
 checkpoints/
 *.pth
 *.pt
-
+cestino/
 .ipynb_checkpoints/
