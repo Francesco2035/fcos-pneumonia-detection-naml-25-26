@@ -1,0 +1,1765 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+
+%==============================================================================
+% Theme
+%==============================================================================
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamercolor{frametitle}{fg=white,bg=polimi}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+
+
+
+%==============================================================================
+% Packages
+%==============================================================================
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multicol}
+\usepackage{tikz}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+%==============================================================================
+% Image handling
+%==============================================================================
+
+% Images are searched in the Images folder.
+\graphicspath{{Images/}}
+
+% Safe image command:
+% If the image exists, it is displayed.
+% If it does not exist, a placeholder is displayed instead.
+%
+% This prevents missing-image errors from stopping compilation.
+\newcommand{\placeholderimage}[2][0.8\textwidth]{%
+    \IfFileExists{#2}{%
+        \includegraphics[width=#1]{#2}%
+    }{%
+        \fbox{%
+            \begin{minipage}[c][0.22\textheight][c]{#1}
+                \centering
+                \texttt{\detokenize{#2}}\\[0.3cm]
+                \footnotesize Image placeholder
+            \end{minipage}%
+        }%
+    }%
+}
+
+%==============================================================================
+% Colors
+%==============================================================================
+
+\definecolor{polimi}{RGB}{0,45,100}
+\definecolor{fcosblue}{RGB}{33,150,243}
+\definecolor{chestred}{RGB}{180,60,60}
+\definecolor{imagegreen}{RGB}{70,140,80}
+
+% General Beamer colors
+\setbeamercolor{structure}{fg=polimi}
+
+% Frame titles: WHITE text on POLIMI BLUE background
+\setbeamercolor{frametitle}{
+    fg=white,
+    bg=polimi
+}
+
+% Title page
+\setbeamercolor{title}{
+    fg=white,
+    bg=polimi
+}
+%==============================================================================
+% Title
+%==============================================================================
+
+\title{Pneumonia Detection Using\\
+Anchor-Free Object Detection}
+
+\subtitle{An FCOS-based study with ResNet backbones}
+
+\author[Francesco Rausa]{Francesco Rausa \\ 10833982}\\
+
+\institute[PoliMI]{
+    Numerical Analysis for Machine Learning\\
+    Politecnico di Milano
+}
+
+\date{2025--2026}
+
+% If you have the Politecnico logo, you can uncomment this line:
+% \titlegraphic{\includegraphics[height=1.4cm]{logo_polimi.png}}
+
+%==============================================================================
+% Document
+%==============================================================================
+
+\begin{document}
+
+%==============================================================================
+% TITLE
+%==============================================================================
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Outline}
+    \tableofcontents
+\end{frame}
+
+%==============================================================================
+% 1. INTRODUCTION
+%==============================================================================
+
+\section{Introduction}
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Motivation and Objective}
+
+\begin{columns}
+
+\begin{column}{0.56\textwidth}
+
+\begin{itemize}
+
+    \item Pneumonia detection from chest X-ray images is a challenging
+    medical imaging task.
+
+    \item The objective is not only to determine whether pneumonia is present,
+    but also to \textbf{localize the affected region}.
+
+    \item Pneumonia findings can vary substantially in
+    \textbf{size, shape and position}.
+
+    \item This motivates the use of an object detection framework rather than
+    image-level classification alone.
+
+\end{itemize}
+
+\vspace{0.3cm}
+
+\textbf{Main question:}
+
+\begin{quote}
+How do backbone depth and pretraining affect an
+anchor-free pneumonia detector?
+\end{quote}
+
+\end{column}
+
+\begin{column}{0.40\textwidth}
+
+\centering
+
+\placeholderimage[\textwidth]{Images/chest_xray_example.jpg}
+
+\vspace{0.2cm}
+
+{\footnotesize Example chest X-ray with pneumonia localization}
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{From Anchor-Based to Anchor-Free Detection}
+
+\begin{columns}[t]
+
+%------------------------------------------------------------------------------
+% Anchor-based
+%------------------------------------------------------------------------------
+
+\begin{column}{0.47\textwidth}
+
+\begin{block}{Anchor-Based}
+\footnotesize
+\begin{itemize}
+    \setlength\itemsep{2pt}
+    \item Predefined bounding boxes
+    \item Classify anchors and regress box offsets
+    \item Requires anchor sizes and aspect ratios
+\end{itemize}
+\end{block}
+
+\end{column}
+
+%------------------------------------------------------------------------------
+% Anchor-free
+%------------------------------------------------------------------------------
+
+\begin{column}{0.47\textwidth}
+
+\begin{block}{Anchor-Free}
+\footnotesize
+\begin{itemize}
+    \setlength\itemsep{2pt}
+    \item No predefined bounding boxes
+    \item Predictions from spatial locations
+    \item FCOS: class + $(l,t,r,b)$ + centerness
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.05cm}
+
+\begin{center}
+    \placeholderimage[0.45\textwidth]{Images/free_vs_anchor.png}
+\end{center}
+
+\vspace{0.02cm}
+
+\centering
+\textbf{This project focuses on the anchor-free formulation.}
+
+\end{frame}
+%------------------------------------------------------------------------------
+
+\begin{frame}{From the Reference Study to the Project Implementation}
+
+\begin{columns}
+
+\begin{column}{0.46\textwidth}
+
+\begin{block}{Reference}
+Wu et al.~(2024)
+\end{block}
+
+\vspace{0.3cm}
+
+\begin{itemize}
+    \item Pneumonia detection on the RSNA dataset
+    \item Anchor-free detection framework
+    \item Feature pyramid
+    \item Center and scale prediction
+\end{itemize}
+
+\end{column}
+
+\begin{column}{0.46\textwidth}
+
+\begin{block}{This project}
+FCOS-based implementation
+\end{block}
+
+\vspace{0.3cm}
+
+\begin{itemize}
+    \item ResNet-50 / ResNet-101
+    \item Feature Pyramid Network
+    \item Classification
+    \item LTRB regression
+    \item Centerness
+\end{itemize}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.5cm}
+
+\centering
+\textbf{
+Goal: study the FCOS formulation itself rather than reproduce the
+reference implementation as a black box.
+}
+
+\end{frame}
+
+
+%==============================================================================
+% 2. ARCHITECTURE
+%==============================================================================
+
+\section{Architecture}
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Overall Architecture}
+
+\begin{center}
+
+\placeholderimage[0.70\textwidth]{Images/overall_architecture.png}
+
+\end{center}
+
+\vspace{0.2cm}
+
+\centering
+
+\textbf{Input}
+$\rightarrow$
+\textbf{ResNet}
+$\rightarrow$
+\textbf{FPN}
+$\rightarrow$
+\textbf{Detection Heads}
+
+\end{frame}
+
+%------------------------------------------------------------------------------
+
+%==============================================================================
+% RESNET
+%==============================================================================
+
+\section{ResNet Backbone}
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Why ResNet?}
+
+\begin{columns}
+
+\begin{column}{0.48\textwidth}
+
+\begin{itemize}
+    \item Increasing depth does not always improve training.
+    
+    \item He et al. observed a \textbf{degradation problem}:
+    deeper plain networks can have \textbf{higher training error}.
+    
+    \item The effect is not simply due to overfitting.
+    
+    \item Main issue: \textbf{optimization difficulty}.
+\end{itemize}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+\centering
+
+\placeholderimage[0.55\textwidth]{Images/resnet_degradation_plain.png}
+
+\vspace{0.15cm}
+
+\placeholderimage[0.55\textwidth]{Images/resnet_degradation_resnet.png}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.15cm}
+
+\begin{block}{Key idea}
+ResNet introduces \textbf{residual learning} and shortcut connections
+to make deeper networks easier to optimize.
+\end{block}
+
+\end{frame}
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{How Residual Learning Works}
+
+\begin{columns}
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Plain formulation}
+
+\[
+H(x)
+\]
+
+The stacked layers directly learn the desired transformation.
+
+\end{block}
+
+\vspace{0.25cm}
+
+\begin{block}{Residual formulation}
+
+\[
+F(x) = H(x) - x
+\]
+
+\centering so that
+
+\[
+H(x) = F(x) + x
+\]
+
+\end{block}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+\centering
+
+\placeholderimage[\textwidth]{Images/residual_block.png}
+
+\vspace{0.2cm}
+
+{\footnotesize
+Shortcut connection + residual branch
+}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.25cm}
+
+\centering
+
+\textbf{The shortcut provides a direct identity path through the network.}
+
+\end{frame}
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{The Bottleneck Residual Block}
+
+\begin{columns}
+
+\begin{column}{0.42\textwidth}
+
+\centering
+
+\placeholderimage[\textwidth]{Images/bottleneck_block.png}
+
+\end{column}
+
+\begin{column}{0.53\textwidth}
+
+\begin{block}{Three-layer residual branch}
+
+\begin{enumerate}
+    \item $1\times1$ convolution:
+    \textbf{reduce} channels
+    
+    \item $3\times3$ convolution:
+    spatial feature extraction
+    
+    \item $1\times1$ convolution:
+    \textbf{restore} channels
+\end{enumerate}
+
+\end{block}
+
+\vspace{0.25cm}
+
+\[
+C_{\mathrm{in}}
+\;\rightarrow\;
+C_{\mathrm{bottleneck}}
+\;\rightarrow\;
+C_{\mathrm{out}}
+\]
+
+\vspace{0.2cm}
+
+\centering
+\textbf{Why? Efficient deeper networks}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.25cm}
+
+{\footnotesize
+For ResNet-50/101, the bottleneck uses $1\times1$, $3\times3$, and
+$1\times1$ convolutions.
+}
+
+\end{frame}
+
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{ResNet-50 and ResNet-101}
+
+\begin{columns}[t]
+
+\begin{column}{0.68\textwidth}
+
+\centering
+
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Stage} & \textbf{R50} & \textbf{R101} &
+\textbf{Resolution} & \textbf{Channels} \\
+\midrule
+Input       & -- & -- & $512\times512$ & 3 \\
+Conv1       & -- & -- & $256\times256$ & 64 \\
+MaxPool     & -- & -- & $128\times128$ & 64 \\
+$conv2_x$   & 3  & 3  & $128\times128$ & 256 \\
+$conv3_x$   & 4  & 4  & $64\times64$   & 512 \\
+$conv4_x$   & 6  & 23 & $32\times32$   & 1024 \\
+$conv5_x$   & 3  & 3  & $16\times16$   & 2048 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.25cm}
+
+{\footnotesize
+Conv1: $7\times7$, 64 channels, stride 2
+\qquad
+MaxPool: $3\times3$, stride 2
+}
+
+\end{column}
+
+\begin{column}{0.27\textwidth}
+
+\begin{block}{Key idea}
+\footnotesize
+\begin{itemize}
+    \item Same bottleneck architecture
+    \item R101 is deeper mainly in $conv4_x$
+    \item Resolution decreases
+    \item Channels increase
+\end{itemize}
+\end{block}
+
+\vspace{0.15cm}
+
+\[
+C_3,\;C_4,\;C_5
+\]
+
+\footnotesize
+Feature maps extracted from the backbone
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+
+
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Why Multi-Scale Features?}
+
+\begin{columns}[t]
+
+\begin{column}{0.47\textwidth}
+
+\begin{block}{Deep layers}
+\begin{itemize}
+    \item High-level semantic information
+    \item Large receptive fields
+    \item Low spatial resolution
+\end{itemize}
+\end{block}
+
+\vspace{0.2cm}
+
+\begin{block}{Shallow layers}
+\begin{itemize}
+    \item High spatial resolution
+    \item Precise localization information
+    \item Weaker semantic representation
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\begin{column}{0.47\textwidth}
+
+\begin{block}{The trade-off}
+\centering
+\[
+\text{Semantic information}
+\quad \leftrightarrow \quad
+\text{Spatial precision}
+\]
+\end{block}
+
+\vspace{0.3cm}
+
+\begin{itemize}
+    \item Using only deep features:
+    \textbf{good semantics, poor localization}
+    
+    \item Using only shallow features:
+    \textbf{good localization, weaker semantics}
+\end{itemize}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.3cm}
+
+\centering
+\textbf{Object detection needs both.}
+
+\end{frame}
+
+
+
+
+%------------------------------------------------------------------------------
+
+%------------------------------------------------------------------------------
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{How the Feature Pyramid Network Works}
+
+\begin{columns}[t]
+
+\begin{column}{0.40\textwidth}
+
+\begin{block}{Deep layers}
+\footnotesize
+\begin{itemize}
+    \item Strong semantic information
+    \item Large receptive fields
+    \item Lower spatial resolution
+\end{itemize}
+\end{block}
+
+\vspace{0.15cm}
+
+\begin{block}{Shallow layers}
+\footnotesize
+\begin{itemize}
+    \item Higher spatial resolution
+    \item Better localization detail
+    \item Weaker semantic representation
+\end{itemize}
+\end{block}
+
+\vspace{0.15cm}
+
+\centering
+\textbf{FPN combines both}
+
+\end{column}
+
+\begin{column}{0.57\textwidth}
+
+\centering
+
+\placeholderimage[\textwidth]{Images/fpn_general.png}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.15cm}
+
+\centering
+\textbf{Top-down pathway + lateral connections}
+
+\end{frame}
+
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Reference Pneumonia Framework vs. FCOS}
+
+\begin{columns}[t]
+
+\begin{column}{0.48\textwidth}
+
+\centering
+\textbf{Reference pneumonia framework}
+
+\vspace{0.2cm}
+
+\placeholderimage[0.92\textwidth]{Images/reference_pneumonia_fpn.png}
+
+\vspace{0.2cm}
+
+{\footnotesize
+Five backbone outputs are independently projected
+via $1\times1$ convolutions.
+}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+\centering
+\textbf{FCOS}
+
+\vspace{0.2cm}
+
+\placeholderimage[0.6\textwidth]{Images/fcos_fpn.png}
+
+\vspace{0.2cm}
+
+{\footnotesize
+$C_3$--$C_5$ are fused through a top-down FPN,
+then extended with $P_6$ and $P_7$.
+}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.35cm}
+
+\centering
+\textbf{The project's implementation follows the FCOS feature construction.}
+
+\end{frame}
+%------------------------------------------------------------------------------
+%------------------------------------------------------------------------------
+
+\begin{frame}{FCOS-Style Detection Head}
+
+\begin{columns}[t]
+
+\begin{column}{0.43\textwidth}
+
+\begin{itemize}
+
+    \item One independent head for each
+    \textbf{FPN level} $P_3$--$P_7$
+
+    \item Each input feature map has
+    \textbf{256 channels}
+
+    \item Two feature towers:
+    \begin{itemize}
+        \item Classification
+        \item Regression
+    \end{itemize}
+
+\end{itemize}
+
+\vspace{0.2cm}
+
+\centering
+\textbf{Per-location predictions}
+
+\[
+\text{class}
+\qquad
+(l,t,r,b)
+\qquad
+\text{centerness}
+\]
+
+\end{column}
+
+\begin{column}{0.55\textwidth}
+
+\centering
+
+\placeholderimage[1\textwidth]{Images/detection_head.png}
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{What Does Each Head Predict?}
+
+\begin{columns}[t]
+
+\begin{column}{0.31\textwidth}
+
+\begin{block}{Classification}
+\centering
+\[
+1 \times H_i \times W_i
+\]
+
+\vspace{0.1cm}
+
+\footnotesize
+Is this location associated with pneumonia?
+\end{block}
+
+\end{column}
+
+\begin{column}{0.31\textwidth}
+
+\begin{block}{Box Regression}
+\centering
+\[
+4 \times H_i \times W_i
+\]
+
+\vspace{0.1cm}
+
+\footnotesize
+$(l,t,r,b)$ distances
+\end{block}
+
+\end{column}
+
+\begin{column}{0.31\textwidth}
+
+\begin{block}{Centerness}
+\centering
+\[
+1 \times H_i \times W_i
+\]
+
+\vspace{0.1cm}
+
+\footnotesize
+Quality of the spatial location
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.5cm}
+
+\centering
+
+\[
+P_i
+\quad\longrightarrow\quad
+\boxed{\text{Classification}}
+\quad+\quad
+\boxed{\text{Regression}}
+\quad+\quad
+\boxed{\text{Centerness}}
+\]
+
+\vspace{0.25cm}
+
+\begin{block}{Key point}
+\centering
+\textbf{Predictions are associated directly with spatial locations,
+not anchor boxes.}
+\end{block}
+
+\end{frame}
+
+%------------------------------------------------------------------------------
+
+%------------------------------------------------------------------------------
+
+%------------------------------------------------------------------------------
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Target Assignment}
+
+\begin{columns}[t]
+
+\begin{column}{0.47\textwidth}
+
+\begin{block}{1. Map locations to the image}
+\footnotesize
+
+For location $(x,y)$ and stride $s$:
+
+\[
+p_x=(x+0.5)s,
+\qquad
+p_y=(y+0.5)s
+\]
+
+A location is positive only if it lies
+inside a ground-truth box.
+
+\end{block}
+
+\vspace{0.12cm}
+
+\begin{block}{2. Build LTRB targets}
+\footnotesize
+
+\[
+l=p_x-x_1,\qquad t=p_y-y_1
+\]
+
+\[
+r=x_2-p_x,\qquad b=y_2-p_y
+\]
+
+\end{block}
+
+\end{column}
+
+\begin{column}{0.47\textwidth}
+
+\begin{block}{3. Assign the FPN level}
+\footnotesize
+
+\[
+d_{\max}=\max(l,t,r,b)
+\]
+
+\[
+\begin{array}{c|c}
+P_3 &[0,64)\\
+P_4 &[64,128)\\
+P_5 &[128,256)\\
+P_6 &[256,512)\\
+P_7 &[512,\infty)
+\end{array}
+\]
+
+\end{block}
+
+\vspace{0.12cm}
+
+\begin{block}{4. Centerness target}
+\footnotesize
+
+\[
+c^*=
+\sqrt{
+\frac{\min(l,r)}{\max(l,r)}
+\frac{\min(t,b)}{\max(t,b)}
+}
+\]
+
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.05cm}
+
+\centering
+{\scriptsize
+\textbf{GT boxes} $\;\longrightarrow\;$ 
+\textbf{positive mask + LTRB + centerness targets}
+}
+
+\end{frame}
+
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Loss Functions}
+
+\begin{block}{Classification --- Sigmoid Focal Loss}
+
+\[
+\mathcal{L}_{\mathrm{cls}}
+=
+-\alpha_t(1-p_t)^\gamma \log(p_t)
+\]
+
+\centering
+{\footnotesize $\alpha=0.25,\qquad \gamma=2$}
+
+\end{block}
+
+\vspace{0.15cm}
+
+\begin{block}{Bounding Box --- GIoU Loss}
+
+\[
+\operatorname{GIoU}(A,B)
+=
+\operatorname{IoU}(A,B)
+-
+\frac{|C\setminus(A\cup B)|}{|C|}
+\]
+
+\[
+\mathcal{L}_{\mathrm{reg}}=1-\operatorname{GIoU}(A,B)
+\]
+
+\end{block}
+
+\vspace{0.15cm}
+
+\begin{block}{Centerness --- Sigmoid Focal Loss}
+
+\[
+\mathcal{L}_{\mathrm{ctr}}
+=
+-\alpha_t(1-p_t)^\gamma\log(p_t)
+\]
+
+\end{block}
+
+\vspace{0.12cm}
+
+\centering
+\[
+\boxed{
+\mathcal{L}
+=
+\mathcal{L}_{\mathrm{cls}}
++
+\mathcal{L}_{\mathrm{reg}}
++
+\mathcal{L}_{\mathrm{ctr}}
+}
+\]
+
+{\footnotesize Equal weights for the three components.}
+
+\end{frame}
+
+%==============================================================================
+% 3. EXPERIMENTAL SETUP
+%==============================================================================
+
+\section{Experimental Setup}
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Experimental Setup}
+
+\begin{columns}[t]
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Dataset}
+\small
+\begin{itemize}
+    \item RSNA Pneumonia Detection Challenge
+    \item Bounding-box annotations
+    \item Input resolution: $512\times512$
+\end{itemize}
+\end{block}
+
+\vspace{0.2cm}
+
+\begin{block}{Common Pipeline}
+\small
+\begin{itemize}
+    \item Same detector architecture
+    \item Same data split
+    \item Same target assignment
+    \item Same evaluation procedure
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Backbone Configurations}
+\centering
+\begin{tabular}{lcc}
+\toprule
+ & \textbf{ImageNet} & \textbf{Chest-Xray} \\
+\midrule
+ResNet-50  & R50-IN  & R50-CX \\
+ResNet-101 & R101-IN & R101-CX \\
+\bottomrule
+\end{tabular}
+\end{block}
+
+\vspace{0.25cm}
+
+\centering
+\[
+\boxed{
+2\ \text{depths}
+\times
+2\ \text{initializations}
+=
+4\ \text{final models}
+}
+\]
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.3cm}
+
+
+
+\centering
+\textbf{Goal: study the effect of backbone depth and initialization.}
+
+\end{frame}
+
+%------------------------------------------------------------------------------
+\begin{frame}{Training Strategy}
+\begin{columns}[t]
+
+\begin{column}{0.46\textwidth}
+
+\begin{block}{Optimization}
+\small
+\begin{itemize}
+    \item Backbone freezing
+    \item Differential learning rates
+    \item Learning-rate warm-up
+    \item Cosine annealing
+\end{itemize}
+\end{block}
+
+\vspace{0.25cm}
+
+\begin{block}{Stability}
+\small
+\begin{itemize}
+    \item Gradient clipping
+    \item Exponential Moving Average (EMA)
+    \item Validation-based checkpoint selection
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\begin{column}{0.46\textwidth}
+\centering
+
+\[
+\text{Freeze}
+\rightarrow
+\text{Warm-up}
+\rightarrow
+\text{Unfreeze}
+\rightarrow
+\text{Fine-tune}
+\]
+
+\vspace{0.45cm}
+
+\begin{alertblock}{Main idea}
+\centering
+\small
+Protect pretrained features first,\\
+then progressively adapt the detector.
+\end{alertblock}
+
+\vspace{0.3cm}
+
+{\footnotesize
+Training schedules were adapted to the convergence behaviour
+of each configuration.
+}
+
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+
+
+
+
+
+\begin{frame}{Why Longer Training?}
+
+\centering
+
+\vspace{0.15cm}
+
+\placeholderimage[0.45\textwidth]{Images/AP/why_long.png}
+
+\vspace{0.2cm}
+
+\begin{alertblock}{ResNet-101}
+\centering
+\small
+Slower convergence and larger validation fluctuations
+\end{alertblock}
+
+\vspace{0.1cm}
+
+{\footnotesize
+Simply increasing the number of epochs was not sufficient.
+}
+\end{frame}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\begin{frame}{Evaluation Metrics}
+
+\begin{columns}[t]
+
+\begin{column}{0.31\textwidth}
+
+\begin{block}{Detection}
+\small
+\textbf{AP}\\
+Average Precision across confidence thresholds
+
+\vspace{0.15cm}
+
+\textbf{AR@10}\\
+Average Recall with at most 10 detections/image
+\end{block}
+
+\end{column}
+
+\begin{column}{0.31\textwidth}
+
+\begin{block}{Image-level}
+\small
+\textbf{Precision}\\
+Fraction of positive predictions that are correct
+
+\vspace{0.1cm}
+
+\textbf{Recall}\\
+Fraction of positive images correctly detected
+
+\vspace{0.1cm}
+
+\textbf{F1-score}\\
+Balance between precision and recall
+\end{block}
+
+\end{column}
+
+\begin{column}{0.31\textwidth}
+
+\begin{block}{Localization}
+\small
+\textbf{Mean IoU}\\
+Average overlap of matched boxes
+
+\vspace{0.1cm}
+
+\textbf{Box F1}\\
+Box-level precision--recall balance
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.4cm}
+
+\begin{alertblock}{Operating point}
+\centering
+\small
+For image-level metrics, the confidence threshold is selected on the
+validation set by maximizing Youden's $J$.
+\end{alertblock}
+
+\vspace{0.1cm}
+
+\centering
+\[
+J = \mathrm{Sensitivity}+\mathrm{Specificity}-1
+\]
+
+\end{frame}
+%==============================================================================
+% 4. RESULTS
+%==============================================================================
+
+\section{Results}
+
+%------------------------------------------------------------------------------
+
+\begin{frame}{Quantitative Results}
+
+\begin{center}
+\small
+
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Model} &
+\textbf{AP} &
+\textbf{AR@10} &
+\textbf{Image F1} &
+\textbf{Mean IoU} &
+\textbf{Box F1} \\
+\midrule
+R50-IN  & \textbf{0.423} & 0.886 & 0.654 & 0.688 & \textbf{0.448} \\
+R50-CX  & 0.399 & 0.876 & 0.633 & 0.684 & 0.424 \\
+R101-IN & 0.397 & \textbf{0.901} & \textbf{0.668} &
+          \textbf{0.692} & 0.446 \\
+R101-CX & 0.239 & 0.804 & 0.649 & 0.659 & 0.388 \\
+\bottomrule
+\end{tabular}
+
+\end{center}
+
+\vspace{0.45cm}
+
+\begin{columns}
+
+\begin{column}{0.46\textwidth}
+
+\begin{block}{R50-IN}
+\centering
+Highest AP and slightly highest Box F1.
+\end{block}
+
+\end{column}
+
+\begin{column}{0.46\textwidth}
+
+\begin{block}{R101-IN}
+\centering
+Highest AR@10, Image F1 and mean matched IoU.
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Precision--Recall and Object Size}
+
+\begin{columns}[t]
+
+\begin{column}{0.56\textwidth}
+\centering
+
+\placeholderimage[0.63\linewidth]{Images/comparison/precision_recall_comparison.png}
+
+\vspace{0.08cm}
+
+{\scriptsize
+Precision--Recall curves on the validation set
+}
+
+\vspace{0.18cm}
+
+\begin{alertblock}{Key observation}
+\centering
+\small
+R50-IN provides the strongest integrated
+Precision--Recall trade-off.
+\end{alertblock}
+
+\end{column}
+
+\begin{column}{0.40\textwidth}
+
+\begin{block}{Overall AP}
+\centering
+\small
+\begin{tabular}{lc}
+\toprule
+\textbf{Model} & \textbf{AP} \\
+\midrule
+R50-IN  & \textbf{0.423} \\
+R50-CX  & 0.399 \\
+R101-IN & 0.397 \\
+R101-CX & 0.239 \\
+\bottomrule
+\end{tabular}
+\end{block}
+
+\vspace{0.18cm}
+
+\begin{block}{By region size}
+\centering
+\scriptsize
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & $\mathbf{AP_M}$ & $\mathbf{AP_L}$ \\
+\midrule
+R50-IN  & 0.039 & \textbf{0.442} \\
+R50-CX  & 0.024 & 0.433 \\
+R101-IN & 0.035 & 0.413 \\
+R101-CX & 0.029 & 0.231 \\
+\bottomrule
+\end{tabular}
+\end{block}
+
+\vspace{0.18cm}
+
+\begin{alertblock}{Scale-related limitation}
+\centering
+\small
+$\mathbf{AP_M < 0.04}$ for all four models.
+\\[0.05cm]
+Medium-sized regions remain difficult.
+\end{alertblock}
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+\begin{frame}{Image-Level Results: ImageNet Initialization}
+
+\begin{columns}[c]
+
+\begin{column}{0.48\textwidth}
+\centering
+
+\textbf{R50-IN}
+
+\vspace{0.15cm}
+
+\placeholderimage[0.7\textwidth]{Images/confusion/R50-IN.png}
+
+\vspace{0.05cm}
+
+{\small
+F1 = 0.654 \qquad Youden $J$ = 0.628
+}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\centering
+
+\textbf{R101-IN}
+
+\vspace{0.15cm}
+
+\placeholderimage[0.7\textwidth]{Images/confusion/R101-IN.png}
+
+\vspace{0.05cm}
+
+{\small
+F1 = \textbf{0.668} \qquad Youden $J$ = \textbf{0.646}
+}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.25cm}
+
+\begin{alertblock}{Observation}
+\centering
+\small
+R101-IN provides the stronger image-level operating point.
+\end{alertblock}
+
+\end{frame}
+\begin{frame}{Image-Level Results: Chest-Xray Initialization}
+
+\begin{columns}[c]
+
+\begin{column}{0.48\textwidth}
+\centering
+
+\textbf{R50-CX}
+
+\vspace{0.15cm}
+
+\placeholderimage[0.7\textwidth]{Images/confusion/R50-CX.png}
+
+\vspace{0.05cm}
+
+{\small
+F1 = 0.633 \qquad Youden $J$ = 0.602
+}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\centering
+
+\textbf{R101-CX}
+
+\vspace{0.15cm}
+
+\placeholderimage[0.7\textwidth]{Images/confusion/R101-CX.png}
+
+\vspace{0.05cm}
+
+{\small
+F1 = 0.649 \qquad Youden $J$ = 0.616
+}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.25cm}
+
+\begin{alertblock}{Observation}
+\centering
+\small
+ImageNet initialization performs better than Chest-Xray initialization
+under the final training conditions.
+\end{alertblock}
+
+\end{frame}
+
+
+\begin{frame}{Qualitative Example: R101-IN}
+
+\begin{columns}[c]
+
+\begin{column}{0.46\textwidth}
+\centering
+
+\textbf{Input radiograph}
+
+\vspace{0.15cm}
+
+\placeholderimage[0.6\textwidth]{Images/qualitative/r101in_input.jpg}
+
+\end{column}
+
+\begin{column}{0.46\textwidth}
+\centering
+
+\textbf{Feature flow and prediction}
+
+\vspace{0.15cm}
+
+\placeholderimage[1\textwidth]{Images/qualitative/r101in_feature_flow.png}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.25cm}
+
+\begin{alertblock}{Qualitative inspection}
+\centering
+\small
+The detector progressively transforms the radiograph into
+multi-scale feature representations before producing the final prediction.
+\end{alertblock}
+
+\end{frame}
+
+
+
+
+\begin{frame}{Clinical Review: Limitations of the Dataset}
+
+\begin{columns}[t]
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Image acquisition}
+\small
+\begin{itemize}
+    \item Many examinations are \textbf{portable chest X-rays}
+    \item Patients are often examined in a \textbf{supine or non-standing position}
+    \item Positioning can change the apparent extent and distribution of opacities
+    \item Only \textbf{one projection} is available in the dataset
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Clinical assessment}
+\small
+\begin{itemize}
+    \item In practice, radiologists can use \textbf{frontal and lateral projections}
+    \item Diagnosis is based on the \textbf{overall thoracic appearance}, not only on the opacity
+    \item Cardiac size, diaphragm and costophrenic angles can provide additional information
+    \item Clinical history and previous imaging may further change the interpretation
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.3cm}
+
+\begin{alertblock}{Main limitation}
+\centering
+\small
+The model receives \textbf{a single radiograph and an opacity annotation},
+while clinical assessment can integrate \textbf{multiple projections and additional anatomical and clinical information}.
+\end{alertblock}
+
+\end{frame}
+
+
+
+
+
+\begin{frame}{Implementation, Hardware & Resources}
+
+\begin{columns}[t]
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Software}
+\small
+\begin{itemize}
+    \item PyTorch
+    \item torchvision
+\end{itemize}
+\end{block}
+
+\vspace{0.2cm}
+
+\begin{block}{Datasets}
+\small
+\textbf{RSNA Pneumonia Detection Challenge}\\
+Used for detector training and evaluation.
+
+\vspace{0.12cm}
+
+\textbf{Chest X-Ray Images (Pneumonia)}\\
+Used for Chest-Xray pretraining.
+\end{block}
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+\begin{block}{Hardware}
+\small
+\begin{itemize}
+    \item NVIDIA RTX 4090
+    \item Cloud GPU rental (\url{https://www.runpod.io/})
+    \item $\sim$20 experiments
+    \item Total cost: $\sim$\textbf{\euro20}
+\end{itemize}
+\end{block}
+
+\vspace{0.2cm}
+
+\begin{block}{Repository}
+\centering
+\small
+\url{https://github.com/Francesco2035/}\\
+\url{fcos-pneumonia-detection-naml-25-26}
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+
+
+
+\begin{frame}{Conclusions}
+
+\begin{block}{1. Anchor-free detection}
+\centering
+A fully convolutional FCOS-style detector can localize pneumonia
+without predefined anchor boxes.
+\end{block}
+
+\vspace{0.2cm}
+
+\begin{block}{2. Initialization and backbone}
+\centering
+ImageNet initialization provided the most reliable starting point.
+The Chest-Xray pretrained models were relatively disadvantageous,
+especially for ResNet-101.
+\end{block}
+
+\vspace{0.2cm}
+
+\begin{block}{3. Main lesson}
+\centering
+A strong backbone is important, but \textbf{careful training and optimization}
+have a major impact on the final performance.
+Better-controlled training and richer clinical information remain key directions.
+\end{block}
+
+\vspace{0.3cm}
+
+\centering
+\textbf{Best overall operating-point model: R101-IN}
+
+\end{frame}
+
+
+
+
+\begin{frame}{References}
+
+\footnotesize
+
+\begin{thebibliography}{9}
+
+\bibitem{wu2024}
+L. Wu et al.,
+\textit{Pneumonia detection based on RSNA dataset and anchor-free
+deep learning detector},
+Scientific Reports, 2024.
+
+\bibitem{fcos}
+Z. Tian, C. Shen, H. Chen, T. He,
+\textit{FCOS: Fully Convolutional One-Stage Object Detection},
+ICCV, 2019.
+
+\bibitem{resnet}
+K. He, X. Zhang, S. Ren, J. Sun,
+\textit{Deep Residual Learning for Image Recognition},
+CVPR, 2016.
+
+\bibitem{fpn}
+T.-Y. Lin et al.,
+\textit{Feature Pyramid Networks for Object Detection},
+CVPR, 2017.
+
+\bibitem{focal}
+T.-Y. Lin et al.,
+\textit{Focal Loss for Dense Object Detection},
+ICCV, 2017.
+
+\bibitem{giou}
+H. Rezatofighi et al.,
+\textit{Generalized Intersection over Union: A Metric and a Loss
+for Bounding Box Regression},
+CVPR, 2019.
+
+\end{thebibliography}
+
+\end{frame}
+
+
+
+
+%==============================================================================
+
+\end{document}
