@@ -554,26 +554,50 @@ visualization.
 
 Contains plotting and visualization utilities.
 
+Certo. Sostituirei interamente quella sezione con questa, includendo Hugging Face e specificando che **i modelli finali sono disponibili, mentre i checkpoint di pretraining Chest-Xray non sono distribuiti**:
+
+````markdown
 ## Checkpoints
 
-Large model checkpoints are not included in the repository.
+The four final detector checkpoints are available through the
+[Hugging Face repository](https://huggingface.co/Francesco2035/fcos-pneumonia-detection-model-checkpoints).
 
-The trained checkpoints are several hundred megabytes in size and should
-not be committed to the normal Git history.
+The available models are:
 
-The recommended approach is to distribute large checkpoints separately and
-keep the Git repository focused on source code, configuration and
-documentation.
+- **R50-IN** — ResNet-50 with ImageNet initialization
+- **R50-CX** — ResNet-50 with Chest-Xray initialization
+- **R101-IN** — ResNet-101 with ImageNet initialization
+- **R101-CX** — ResNet-101 with Chest-Xray initialization
+
+Only the final detector checkpoints are provided. The intermediate
+**Chest-Xray pretraining checkpoints are not included**, as they are not
+required to use the final models.
+
+The checkpoints are several hundred megabytes in size and are therefore
+distributed separately from the Git repository rather than committed to
+the normal Git history.
 
 Once a checkpoint has been downloaded locally, it can be passed to the
 analysis or visualization commands with:
 
 ```text
 --checkpoint path/to/checkpoint.pt
+````
+
+For example:
+
+```bash
+uv run python main.py \
+    --mode analyze \
+    --checkpoint path/to/resnet101_imagenet_long_ft.pt \
+    --backbone imagenet \
+    --resnet-depth 101
 ```
 
-Git LFS can also be used when direct distribution through GitHub is
-required.
+The appropriate `--backbone` and `--resnet-depth` arguments should be
+selected according to the checkpoint being used.
+
+
 
 ## References
 
