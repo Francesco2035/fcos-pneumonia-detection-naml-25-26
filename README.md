@@ -1,27 +1,27 @@
 # Pneumonia Detection Using Anchor-Free Object Detection
 
-This repository contains our implementation of an anchor-free pneumonia detection system for chest X-ray images.
+This repository contains my implementation of an anchor-free pneumonia detection system for chest X-ray images.
 
-The project was developed for the Numerical Analysis for Machine Learning course at Politecnico di Milano. The main goal is to study pneumonia localization using an FCOS-style object detector with ResNet backbones.
+I developed the project for the Numerical Analysis for Machine Learning course at Politecnico di Milano. The main goal is to study pneumonia localization using an FCOS-style object detector with ResNet backbones.
 
 ## Project Overview
 
 The project combines the RSNA Pneumonia Detection Challenge with an anchor-free object detection approach based on FCOS.
 
-The application context is inspired by the work of Wu et al. on pneumonia detection and localization using the RSNA dataset. Instead of reproducing the reference implementation, we implemented an FCOS-style detector and used it to study pneumonia localization in chest X-ray images.
+The application context is inspired by the work of Wu et al. on pneumonia detection and localization using the RSNA dataset. Instead of reproducing the reference implementation, I implemented an FCOS-style detector and used it to study pneumonia localization in chest X-ray images.
 
-We compare two ResNet depths and two initialization strategies:
+I compare two ResNet depths and two initialization strategies:
 
-| Model     | Backbone   | Initialization |
-| --------- | ---------- | -------------- |
-| `R50-IN`  | ResNet-50  | ImageNet       |
-| `R50-CX`  | ResNet-50  | Chest-Xray     |
-| `R101-IN` | ResNet-101 | ImageNet       |
-| `R101-CX` | ResNet-101 | Chest-Xray     |
+| Model | Backbone | Initialization |
+|---|---|---|
+| `R50-IN` | ResNet-50 | ImageNet |
+| `R50-CX` | ResNet-50 | Chest-Xray |
+| `R101-IN` | ResNet-101 | ImageNet |
+| `R101-CX` | ResNet-101 | Chest-Xray |
 
 All four detector configurations are trained and evaluated on the RSNA Pneumonia Detection Challenge dataset.
 
-The Chest X-Ray Images (Pneumonia) dataset is used separately for domain-specific pretraining of the ResNet backbone.
+I use the Chest X-Ray Images (Pneumonia) dataset separately for domain-specific pretraining of the ResNet backbone.
 
 ## Main Features
 
@@ -31,15 +31,15 @@ The detector does not use predefined anchor boxes.
 
 Predictions are generated directly from spatial locations of the feature maps. For each location, the model predicts:
 
-* a pneumonia classification score;
-* four bounding-box distances `(l, t, r, b)`;
-* a centerness score.
+- a pneumonia classification score;
+- four bounding-box distances `(l, t, r, b)`;
+- a centerness score.
 
 ### Multi-Scale Feature Pyramid
 
 The ResNet backbone provides feature representations at different spatial resolutions.
 
-We use `C3`, `C4` and `C5` to build an FCOS-style feature pyramid with levels `P3` through `P7`.
+I use `C3`, `C4` and `C5` to build an FCOS-style feature pyramid with levels `P3` through `P7`.
 
 ### Target Assignment
 
@@ -47,9 +47,9 @@ Training targets follow an FCOS-style location-based formulation.
 
 For each feature-map location, the target generation step determines whether the location is associated with a ground-truth bounding box and, when positive, computes:
 
-* the positive-location mask;
-* `(l, t, r, b)` regression targets;
-* the centerness target.
+- the positive-location mask;
+- `(l, t, r, b)` regression targets;
+- the centerness target.
 
 Different regression ranges are assigned to the different FPN levels.
 
@@ -57,9 +57,9 @@ Different regression ranges are assigned to the different FPN levels.
 
 The training objective combines three components:
 
-* Sigmoid Focal Loss for classification;
-* Generalized IoU Loss for bounding-box regression;
-* Sigmoid Focal Loss for centerness.
+- Sigmoid Focal Loss for classification;
+- Generalized IoU Loss for bounding-box regression;
+- Sigmoid Focal Loss for centerness.
 
 The total loss is:
 
@@ -73,7 +73,7 @@ Using Focal Loss for centerness is one of the project-specific modifications wit
 
 ### Transfer Learning
 
-We support two backbone initialization strategies:
+I support two backbone initialization strategies:
 
 ```text
 ImageNet pretrained weights
@@ -86,57 +86,57 @@ The Chest-Xray initialization comes from a separate classification pretraining s
 
 The training pipeline supports:
 
-* backbone freezing;
-* differential learning rates;
-* learning-rate warm-up;
-* cosine annealing;
-* gradient clipping;
-* Exponential Moving Average (EMA);
-* validation-based checkpoint selection.
+- backbone freezing;
+- differential learning rates;
+- learning-rate warm-up;
+- cosine annealing;
+- gradient clipping;
+- Exponential Moving Average (EMA);
+- validation-based checkpoint selection.
 
 Two training implementations are available:
 
-* `standard`: the original training pipeline;
-* `v2`: an extended version with additional training features such as warm-up, differential learning rates and EMA.
+- `standard`: the original training pipeline;
+- `v2`: an extended version with additional training features such as warm-up, differential learning rates and EMA.
 
 `TrainerV2` extends the standard trainer, but the additional operations can make training slower.
 
 ### Evaluation and Analysis
 
-The project provides several evaluation metrics, including:
+I use several evaluation metrics, including:
 
-* Average Precision (AP);
-* Average Recall at 10 detections (AR@10);
-* image-level precision;
-* image-level recall;
-* specificity;
-* F1-score;
-* Youden's J;
-* mean matched IoU;
-* box-level precision, recall and F1.
+- Average Precision (AP);
+- Average Recall at 10 detections (AR@10);
+- image-level precision;
+- image-level recall;
+- specificity;
+- F1-score;
+- Youden's J;
+- mean matched IoU;
+- box-level precision, recall and F1.
 
-For image-level evaluation, the operating threshold can be calibrated on the validation set using Youden's J statistic.
+For image-level evaluation, I calibrate the operating threshold on the validation set using Youden's J statistic.
 
 ### Visualization
 
 The repository includes tools for:
 
-* confusion matrices;
-* prediction visualization;
-* per-image detection results;
-* feature-flow visualization;
-* qualitative comparison of predictions;
-* analysis of prediction disagreements.
+- confusion matrices;
+- prediction visualization;
+- per-image detection results;
+- feature-flow visualization;
+- qualitative comparison of predictions;
+- analysis of prediction disagreements.
 
 Two visualization modes are available.
 
 The standard mode uses the model-specific calibrated threshold.
 
-The diagnostic mode uses a fixed threshold of `0.10` and disables NMS, redundancy suppression and the detection cap. It is intended only for qualitative inspection and should not be used for quantitative evaluation.
+The diagnostic mode uses a fixed threshold of `0.10` and disables NMS, redundancy suppression and the detection cap. I use it only for qualitative inspection, not for quantitative evaluation.
 
 ## Installation
 
-We use [uv](https://docs.astral.sh/uv/) for Python environment and dependency management.
+I use [uv](https://docs.astral.sh/uv/) for Python environment and dependency management.
 
 ### Install uv
 
@@ -161,9 +161,9 @@ cd fcos-pneumonia-detection-naml-25-26
 
 ### Install Dependencies
 
-The repository contains both `pyproject.toml` and `uv.lock`.
+I use `pyproject.toml` to define the project and its dependencies, while `uv.lock` pins the exact versions used in the environment.
 
-Install the locked dependencies with:
+Install the dependencies with:
 
 ```bash
 uv sync
@@ -179,11 +179,11 @@ uv run python main.py --help
 
 The datasets are not included in the repository.
 
-We use two datasets for different purposes.
+I use two datasets for different purposes.
 
 ### RSNA Pneumonia Detection Challenge
 
-The RSNA Pneumonia Detection Challenge is the main dataset used for detector training, validation and evaluation.
+The RSNA Pneumonia Detection Challenge is the main dataset I use for detector training, validation and evaluation.
 
 Official source:
 
@@ -195,7 +195,7 @@ The exact RSNA paths are defined in `src/config.py`.
 
 ### Chest X-Ray Images (Pneumonia)
 
-The Chest X-Ray Images (Pneumonia) dataset is used for domain-specific backbone pretraining.
+I use the Chest X-Ray Images (Pneumonia) dataset for domain-specific backbone pretraining.
 
 Source:
 
@@ -298,7 +298,7 @@ uv run python main.py \
 
 The pretraining interface supports configurable architecture, image size, epochs, batch size, learning rate, weight decay, workers, random seed and optional automatic mixed precision.
 
-A standalone version of the same procedure is also available under `scripts/pretrain.py`. This is useful when pretraining needs to be run separately from the main CLI.
+A standalone version of the same procedure is also available under `scripts/pretrain.py`. This is useful when I want to run pretraining separately from the main CLI.
 
 ## Detector Training
 
@@ -353,7 +353,7 @@ There are two different ways to start from an existing checkpoint.
 
 `--resume` continues the training of an existing experiment from its last checkpoint.
 
-`--load-weights` starts a new run using the selected weights. This is useful when the weights should be reused in a new experiment, for example for fine-tuning.
+`--load-weights` starts a new run using the selected weights. I use this when I want to reuse weights in a new experiment, for example for fine-tuning.
 
 A backbone-only version is also available through:
 
@@ -363,7 +363,7 @@ A backbone-only version is also available through:
 
 ## Analysis
 
-After training, a detector checkpoint can be evaluated using:
+After training, I can evaluate a detector checkpoint using:
 
 ```bash
 uv run python main.py \
@@ -413,15 +413,15 @@ uv run python main.py \
 
 The `no_th` mode uses a fixed threshold of `0.10` and disables NMS, redundancy suppression and the detection cap.
 
-This mode is intended only for qualitative inspection.
+I use this mode only for qualitative inspection.
 
 ## Standalone Scripts
 
-The `scripts/` directory contains a few standalone entry points used for tasks that are separate from the main training pipeline.
+The `scripts/` directory contains a few standalone entry points for tasks that are separate from the main training pipeline.
 
 ### `scripts/pretrain.py`
 
-Standalone ResNet pretraining on the Chest-Xray classification dataset.
+This is the standalone version of the ResNet pretraining procedure on the Chest-Xray classification dataset.
 
 It supports ResNet-50 and ResNet-101, optional loading of existing weights, configurable training parameters, backbone freezing and optional CUDA automatic mixed precision.
 
@@ -436,7 +436,7 @@ uv run python scripts/pretrain.py \
 
 ### `scripts/plot.py`
 
-Creates plots from TensorBoard-exported CSV files.
+I use this script to create plots from TensorBoard-exported CSV files.
 
 Several curves can be compared in the same figure by repeating the `--curve` argument.
 
@@ -459,7 +459,7 @@ plots/
 
 ### `scripts/dataset_analysis.py`
 
-Provides basic analysis of the two datasets used in the project.
+I use this script for a basic analysis of the two datasets used in the project.
 
 For the Chest-Xray dataset, it reports the number of images in the train, validation and test splits and their class distribution.
 
@@ -486,7 +486,7 @@ dataset_analysis/
 
 ### `scripts/compare_prediction_differences.py`
 
-This script is used for a more targeted qualitative comparison of the four final detector models.
+I use this script for a more targeted qualitative comparison of the four final detector models.
 
 It first reads the existing per-image CSV results and looks for interesting disagreement cases, including differences in predicted categories, number of detections and localization quality.
 
@@ -590,10 +590,10 @@ This is the main entry point of the project.
 
 It handles:
 
-* pretraining;
-* detector training;
-* analysis;
-* visualization.
+- pretraining;
+- detector training;
+- analysis;
+- visualization.
 
 It also provides command-line control over backbone selection, checkpoint loading, training parameters, thresholding and visualization.
 
@@ -601,12 +601,12 @@ It also provides command-line control over backbone selection, checkpoint loadin
 
 Contains the main detector components:
 
-* `resnet.py`: ResNet implementation;
-* `backbone.py`: backbone and feature extraction;
-* `fpn.py`: Feature Pyramid Network;
-* `detection_head.py`: FCOS-style detection heads;
-* `target_generator.py`: target assignment;
-* `detector.py`: complete detector framework.
+- `resnet.py`: ResNet implementation;
+- `backbone.py`: backbone and feature extraction;
+- `fpn.py`: Feature Pyramid Network;
+- `detection_head.py`: FCOS-style detection heads;
+- `target_generator.py`: target assignment;
+- `detector.py`: complete detector framework.
 
 ### `src/datasets/`
 
@@ -634,16 +634,16 @@ https://huggingface.co/Francesco2035/fcos-pneumonia-detection-model-checkpoints
 
 The available models are:
 
-* **R50-IN** — ResNet-50 with ImageNet initialization
-* **R50-CX** — ResNet-50 with Chest-Xray initialization
-* **R101-IN** — ResNet-101 with ImageNet initialization
-* **R101-CX** — ResNet-101 with Chest-Xray initialization
+- **R50-IN** — ResNet-50 with ImageNet initialization
+- **R50-CX** — ResNet-50 with Chest-Xray initialization
+- **R101-IN** — ResNet-101 with ImageNet initialization
+- **R101-CX** — ResNet-101 with Chest-Xray initialization
 
 Only the final detector checkpoints are provided. The intermediate Chest-Xray pretraining checkpoints are not included, since they are not required to use the final models.
 
 The checkpoints are several hundred megabytes in size, so they are distributed separately from the Git repository.
 
-Once a checkpoint has been downloaded, it can be passed to the analysis or visualization commands using:
+Once a checkpoint has been downloaded, I can pass it to the analysis or visualization commands using:
 
 ```text
 --checkpoint path/to/checkpoint.pt
@@ -663,36 +663,36 @@ The `--backbone` and `--resnet-depth` arguments should match the checkpoint bein
 
 ## References
 
-* Tian, Z., Shen, C., Chen, H., He, T.
-  *FCOS: Fully Convolutional One-Stage Object Detection.*
+- Tian, Z., Shen, C., Chen, H., He, T.  
+  *FCOS: Fully Convolutional One-Stage Object Detection.*  
   ICCV, 2019.
 
-* He, K., Zhang, X., Ren, S., Sun, J.
-  *Deep Residual Learning for Image Recognition.*
+- He, K., Zhang, X., Ren, S., Sun, J.  
+  *Deep Residual Learning for Image Recognition.*  
   CVPR, 2016.
 
-* Lin, T.-Y. et al.
-  *Feature Pyramid Networks for Object Detection.*
+- Lin, T.-Y. et al.  
+  *Feature Pyramid Networks for Object Detection.*  
   CVPR, 2017.
 
-* Lin, T.-Y. et al.
-  *Focal Loss for Dense Object Detection.*
+- Lin, T.-Y. et al.  
+  *Focal Loss for Dense Object Detection.*  
   ICCV, 2017.
 
-* Rezatofighi, H. et al.
-  *Generalized Intersection over Union: A Metric and A Loss for Bounding Box Regression.*
+- Rezatofighi, H. et al.  
+  *Generalized Intersection over Union: A Metric and A Loss for Bounding Box Regression.*  
   CVPR, 2019.
 
-* Wu, L. et al.
-  *Pneumonia detection based on RSNA dataset and anchor-free deep learning detector.*
+- Wu, L. et al.  
+  *Pneumonia detection based on RSNA dataset and anchor-free deep learning detector.*  
   Scientific Reports, 2024.
 
 ## Dataset Sources
 
-* RSNA Pneumonia Detection Challenge:
+- RSNA Pneumonia Detection Challenge:  
   https://www.rsna.org/challenge-datasets/2018
 
-* Chest X-Ray Images (Pneumonia):
+- Chest X-Ray Images (Pneumonia):  
   https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia
 
 ## License
@@ -706,5 +706,3 @@ See the `LICENSE` file for the full license text.
 Some utility scripts and supporting code were developed with the assistance of generative AI tools.
 
 The detector and the main training pipeline were implemented from scratch, using papers, tutorials and other publicly available resources as references.
-
-This distinction mainly applies to the implementation process: AI assistance was used for some supporting scripts and code, while the model architecture and main training pipeline were developed as part of the project.
