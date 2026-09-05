@@ -695,11 +695,37 @@ The `--backbone` and `--resnet-depth` arguments should match the checkpoint bein
 - Chest X-Ray Images (Pneumonia):  
   https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia
 
-## License
+## License & Attribution
 
-This project is released under the MIT License.
+This project is released under the MIT License and was developed for
+academic purposes as part of the Numerical Analysis for Machine Learning
+course at Politecnico di Milano.
 
-See the `LICENSE` file for the full license text.
+The overall detection task and experimental setting are based on the work
+of Wu et al. on anchor-free pneumonia detection using the RSNA dataset.
+The implementation in this repository is not a direct reproduction of
+their code or architecture, but an adapted FCOS-style detector developed
+for this project.
+
+The ResNet backbone is based on the architecture introduced by He et al.
+(2016). I implemented the backbone from scratch as part of the project,
+while torchvision is also used as a reference and for pretrained
+ImageNet weights.
+
+The feature pyramid follows the Feature Pyramid Network formulation
+introduced by Lin et al. (2017).
+
+The detection framework mainly follows the FCOS formulation of Tian et al.
+(2019), including the anchor-free formulation, feature levels and
+centerness-based detection. The detection heads combine ideas from FCOS
+with the formulation used in the pneumonia detection paper.
+
+The references used for the implementation and the main design choices
+are listed in the References section below.
+
+The RSNA Pneumonia Detection Challenge dataset and the Chest X-Ray Images
+(Pneumonia) dataset are distributed under their own terms and are not
+covered by the MIT License.
 
 ## AI Assistance
 
