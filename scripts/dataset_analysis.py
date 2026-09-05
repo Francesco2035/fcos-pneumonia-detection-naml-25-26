@@ -1,29 +1,4 @@
 #!/usr/bin/env python3
-"""
-Dataset analysis for the NAML-25-26 project.
-
-Analyzes:
-
-1. Chest-Xray classification dataset
-   data/chest_xray/
-       train/NORMAL
-       train/PNEUMONIA
-       val/NORMAL
-       val/PNEUMONIA
-       test/NORMAL
-       test/PNEUMONIA
-
-2. RSNA pneumonia detection dataset
-   data/rsna-pneumonia-detection-challenge/
-       stage_2_train_images/*.dcm
-       stage_2_train_labels.csv
-
-The RSNA CSV follows the schema used by RSNAPneumoniaDataset:
-    patientId, x, y, width, height, Target
-
-Run:
-    uv run python dataset_analysis.py
-"""
 
 from __future__ import annotations
 

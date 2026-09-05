@@ -6,16 +6,13 @@ from pathlib import Path
 import torch
 import torch.multiprocessing as mp
 
-import pretrain
+import scripts.pretrain as pretrain
 
 mp.set_sharing_strategy(
     "file_system"
 )
 
 
-# ============================================================
-# Project imports
-# ============================================================
 
 from src.config import (
     IMAGE_SIZE,
@@ -105,10 +102,9 @@ def parse_args():
             "FCOS-like pneumonia detector."
         )
     )
-
-    # ========================================================
-    # Mode
-    # ========================================================
+    # ============================================================
+    # Mode : pretrain | train | analyze | visualize
+    # ============================================================
 
     parser.add_argument(
         "--mode",
@@ -125,9 +121,9 @@ def parse_args():
         ),
     )
 
-    # ========================================================
-    # Backbone
-    # ========================================================
+    # ============================================================
+    # Backbone : imagenet | chest_xray -> two depth (50 | 101)
+    # ============================================================
 
     parser.add_argument(
         "--backbone",
@@ -155,9 +151,10 @@ def parse_args():
         ),
     )
 
-    # ========================================================
+    # ============================================================
     # Training
-    # ========================================================
+    # ============================================================
+
 
     parser.add_argument(
         "--experiment",
@@ -205,9 +202,9 @@ def parse_args():
         ),
     )
 
-    # ========================================================
-    # Trainer selection
-    # ========================================================
+    # =======================================================================================================================
+    # Trainer selection: v1 | v2 (v2 extends v1 with additional functionalities (e.g. EMA), at the cost of longer training)
+    # =======================================================================================================================
 
     parser.add_argument(
         "--trainer",
@@ -259,9 +256,10 @@ def parse_args():
         ),
     )
 
-    # ========================================================
-    # Training checkpoints
-    # ========================================================
+# =================================================================================================================================================== 
+# Training checkpoints: resume continues from the last checkpoint | load-weights starts a new run with a new TensorBoard (ideally for fine-tuning)
+# ===================================================================================================================================================
+
 
     parser.add_argument(
         "--resume",
@@ -290,21 +288,20 @@ def parse_args():
         ),
     )
 
-    # ========================================================
+    # ======================================================================    
     # Pretraining
-    # ========================================================
+    # Defaults: data=data/chest_xray, architecture=50, image_size=512,
+    # weights=None, epochs=10, batch_size=16, lr=1e-5, weight_decay=1e-4,
+    # workers=8, seed=42, freeze_epochs=0, output_dir=checkpoints/pretrain,
+    # amp=False.
+    # ======================================================================
+
 
     parser.add_argument(
         "--pretrain-data-dir",
         type=str,
-        default=(
-            "/home/legion/shared/Projects/"
-            "NAML_25-26/data/chest_xray"
-        ),
-        help=(
-            "Root directory containing the "
-            "Chest-Xray train/val/test folders."
-        ),
+        default="data/chest_xray",
+        help="Root directory containing the Chest-Xray train/val/test folders.",
     )
 
     parser.add_argument(
@@ -1863,9 +1860,9 @@ def main():
         )
 
 
-# ============================================================
-# Entry point
-# ============================================================
+# <><><><><><><><> #
+#    Entry point   #
+# <><><><><><><><> #
 
 if __name__ == "__main__":
     main()
