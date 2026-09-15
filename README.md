@@ -695,6 +695,20 @@ The `--backbone` and `--resnet-depth` arguments should match the checkpoint bein
 - Chest X-Ray Images (Pneumonia):  
   https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia
 
+## Known Issues
+
+- The `resnet101_chestxray_long.pt` checkpoint currently published on Hugging Face does not contain the expected chest-xray-initialized backbone architecture: its backbone parameters match a standard torchvision ImageNet ResNet-101 (1000-class classification head, `downsample`-style submodule naming) rather than the custom chest-xray-pretrained backbone used elsewhere in this project (2-class head, `identity_downsample`-style naming). For reference, the relevant state_dict entries are:
+
+  ```text
+  'fpn.backbone.model.layer4.2.bn3.running_var': tensor (shape=(2048,), dtype=float32, device=cpu)
+  'fpn.backbone.model.layer4.2.bn3.num_batches_tracked': tensor (shape=(), dtype=int64, device=cpu) 636470
+  'fpn.backbone.model.fc.weight': tensor (shape=(1000,2048), dtype=float32, device=cpu)
+
+- This does not affect the core ImageNet-vs-Chest-Xray backbone comparison presented in the report, which is already established at the ResNet-50 level (R50-IN vs R50-CX).
+
+
+  
+
 ## License & Attribution
 
 This project is released under the MIT License and was developed for
